@@ -7,7 +7,6 @@ import scipy.linalg
 import torch.utils.data as data
 import matplotlib.pyplot as plt
 
-
 class PDE2D_NS:
     def __init__(self, nx, ny, Lx, Ly, viscosity):
         self.nx = nx  # Number of grid points in x
@@ -18,106 +17,106 @@ class PDE2D_NS:
         self.dy = Ly / (ny - 1)
         self.viscosity = viscosity
 
-        # Grid coordinates
-        self.x = np.linspace(0, Lx, nx)
-        self.y = np.linspace(0, Ly, ny)
-        self.X, self.Y = np.meshgrid(self.x, self.y, indexing='ij')
-
-        # Control positions every 4 positions in both x and y
+        # 控制位置，每隔2个节点设置一个控制点
         self.control_positions = []
         for i in range(0, nx, 2):
             for j in range(0, ny, 2):
                 self.control_positions.append((i, j))
         self.M = len(self.control_positions)
 
-        # Control influence matrix B, size (nx*ny, M)
-        self.B = np.zeros((nx, ny, self.M))
+        # 控制影响矩阵B，大小为 (nx*ny, M)
+        self.B = np.zeros((nx*ny, self.M))
         for k, (i, j) in enumerate(self.control_positions):
-            self.B[i, j, k] = 1.0
+            idx = i * self.ny + j
+            self.B[idx, k] = 1.0
 
     def laplacian(self, f):
         """Compute the Laplacian of f using central differences."""
+        f = f.reshape(self.nx, self.ny)
         lap = np.zeros_like(f)
         lap[1:-1, 1:-1] = (
-            (f[2:, 1:-1] - 2*f[1:-1, 1:-1] + f[0:-2, 1:-1]) / self.dx**2 +
-            (f[1:-1, 2:] - 2*f[1:-1, 1:-1] + f[1:-1, 0:-2]) / self.dy**2
+                (f[2:, 1:-1] - 2 * f[1:-1, 1:-1] + f[0:-2, 1:-1]) / self.dx ** 2 +
+                (f[1:-1, 2:] - 2 * f[1:-1, 1:-1] + f[1:-1, 0:-2]) / self.dy ** 2
         )
         # Neumann BCs (zero normal derivative at boundaries)
         # Left and right boundaries
-        lap[0, 1:-1] = (
-            (f[1, 1:-1] - f[0, 1:-1]) / self.dx**2 +
-            (f[0, 2:] - 2*f[0, 1:-1] + f[0, 0:-2]) / self.dy**2
-        )
-        lap[-1, 1:-1] = (
-            (f[-2, 1:-1] - f[-1, 1:-1]) / self.dx**2 +
-            (f[-1, 2:] - 2*f[-1, 1:-1] + f[-1, 0:-2]) / self.dy**2
-        )
+        lap[0, :] = lap[1, :]
+        lap[-1, :] = lap[-2, :]
         # Bottom and top boundaries
-        lap[1:-1, 0] = (
-            (f[2:, 0] - 2*f[1:-1, 0] + f[0:-2, 0]) / self.dx**2 +
-            (f[1:-1, 1] - f[1:-1, 0]) / self.dy**2
-        )
-        lap[1:-1, -1] = (
-            (f[2:, -1] - 2*f[1:-1, -1] + f[0:-2, -1]) / self.dx**2 +
-            (f[1:-1, -2] - f[1:-1, -1]) / self.dy**2
-        )
-        return lap
+        lap[:, 0] = lap[:, 1]
+        lap[:, -1] = lap[:, -2]
+        return lap.flatten()
 
-    def advect(self, u, v, f):
-        """Compute the advection term."""
-        dudx = (f[1:-1, 1:-1] - f[0:-2, 1:-1]) / self.dx
-        dvdy = (f[1:-1, 1:-1] - f[1:-1, 0:-2]) / self.dy
-        advection = u[1:-1, 1:-1] * dudx + v[1:-1, 1:-1] * dvdy
-        return advection
 
     def streamfunction_poisson(self, omega):
         """Solve Poisson equation for streamfunction: ∇²ψ = -ω."""
+        omega = omega.reshape(self.nx, self.ny)
         psi = np.zeros_like(omega)
-        # Use iterative solver; for simplicity, use Gauss-Seidel
-        for iteration in range(1000):
+        dx2 = self.dx ** 2
+        dy2 = self.dy ** 2
+        dx2dy2 = dx2 * dy2
+        denom = 2 * (dx2 + dy2)
+        for iteration in range(5000):
             psi_old = psi.copy()
-            psi[1:-1, 1:-1] = 0.25 * (
-                psi[2:, 1:-1] + psi[0:-2, 1:-1] +
-                psi[1:-1, 2:] + psi[1:-1, 0:-2] +
-                self.dx * self.dy * (-omega[1:-1, 1:-1])
+            psi[1:-1, 1:-1] = (
+                    (dy2 * (psi[2:, 1:-1] + psi[0:-2, 1:-1]) +
+                     dx2 * (psi[1:-1, 2:] + psi[1:-1, 0:-2]) +
+                     dx2dy2 * (-omega[1:-1, 1:-1])) / denom
             )
             # Apply boundary conditions
-            # For this example, assume psi = 0 at boundaries
+            psi[0, :] = psi[1, :]
+            psi[-1, :] = psi[-2, :]
+            psi[:, 0] = psi[:, 1]
+            psi[:, -1] = psi[:, -2]
             max_diff = np.max(np.abs(psi - psi_old))
             if max_diff < 1e-6:
                 break
-        return psi
+        return psi.flatten()
 
     def compute_velocity(self, psi):
         """Compute velocities u and v from streamfunction ψ."""
+        psi = psi.reshape(self.nx, self.ny)
         u = np.zeros_like(psi)
         v = np.zeros_like(psi)
         # Central differences for interior points
         u[1:-1, 1:-1] = (psi[1:-1, 2:] - psi[1:-1, 0:-2]) / (2 * self.dy)
         v[1:-1, 1:-1] = -(psi[2:, 1:-1] - psi[0:-2, 1:-1]) / (2 * self.dx)
-        # Boundary points
-        # Assuming no-slip boundaries (u = v = 0 at boundaries)
+        # Neumann BCs (zero normal derivative at boundaries)
+        u[0, :] = u[1, :]
+        u[-1, :] = u[-2, :]
+        u[:, 0] = u[:, 1]
+        u[:, -1] = u[:, -2]
+        v[0, :] = v[1, :]
+        v[-1, :] = v[-2, :]
+        v[:, 0] = v[:, 1]
+        v[:, -1] = v[:, -2]
         return u, v
 
     def simulate(self, omega0, u_sequence, t_span, time_steps):
         dt = (t_span[1] - t_span[0]) / time_steps
         times = np.linspace(t_span[0], t_span[1], time_steps + 1)
 
-        omega = np.zeros((time_steps + 1, self.nx, self.ny))
-        omega[0, :, :] = omega0
+        N = self.nx * self.ny
+        omega = np.zeros((time_steps + 1, N))
+        omega[0, :] = omega0.flatten()
 
         for t in range(time_steps):
-            omega_t = omega[t, :, :]
+            omega_t = omega[t, :]
             u_t = u_sequence[t, :]  # Shape (M,)
 
             omega_t1 = self.step(omega_t, u_t, dt)
-            omega[t + 1, :, :] = omega_t1
+            omega[t + 1, :] = omega_t1
 
-        return omega  # Shape (time_steps + 1, nx, ny)
+        return omega  # Shape (time_steps + 1, N)
 
     def step(self, omega, u_t, dt):
+        # omega is a flattened array of shape (N,)
         # Add control input
-        B_u = np.sum(self.B * u_t[np.newaxis, np.newaxis, :], axis=2)  # Shape (nx, ny)
+        B_u = self.B @ u_t  # Shape (N,)
+
+        # Reshape to 2D for computation
+        omega_2d = omega.reshape(self.nx, self.ny)
+        B_u_2d = B_u.reshape(self.nx, self.ny)
 
         # Solve for streamfunction ψ
         psi = self.streamfunction_poisson(omega)
@@ -125,24 +124,31 @@ class PDE2D_NS:
         # Compute velocities
         u, v = self.compute_velocity(psi)
 
+        # Reshape velocities to 2D
+        u = u.reshape(self.nx, self.ny)
+        v = v.reshape(self.nx, self.ny)
+
         # Compute Laplacian of ω
         lap_omega = self.laplacian(omega)
 
+        # Reshape laplacian to 2D
+        lap_omega_2d = lap_omega.reshape(self.nx, self.ny)
+
         # Compute advection term
-        conv_omega = np.zeros_like(omega)
+        conv_omega = np.zeros_like(omega_2d)
         # Central differences for advection
         conv_omega[1:-1, 1:-1] = (
-            u[1:-1, 1:-1] * (omega[1:-1, 2:] - omega[1:-1, 0:-2]) / (2 * self.dx) +
-            v[1:-1, 1:-1] * (omega[2:, 1:-1] - omega[0:-2, 1:-1]) / (2 * self.dy)
+                u[1:-1, 1:-1] * (omega_2d[1:-1, 2:] - omega_2d[1:-1, 0:-2]) / (2 * self.dx) +
+                v[1:-1, 1:-1] * (omega_2d[2:, 1:-1] - omega_2d[0:-2, 1:-1]) / (2 * self.dy)
         )
 
         # Time derivative ∂ω/∂t
-        domega_dt = -conv_omega + self.viscosity * lap_omega + B_u
+        domega_dt = -conv_omega + self.viscosity * lap_omega_2d + B_u_2d
 
         # Update ω
-        omega_new = omega + dt * domega_dt
+        omega_new = omega_2d + dt * domega_dt
 
-        return omega_new
+        return omega_new.flatten()
 
 
 class Encoder(nn.Module):
@@ -279,9 +285,10 @@ class Koopman_Model:
         return loss.item()
 
     def compute_control(self, y_t, y_target, K):
-        # Compute the control input
-        y_error = y_t - y_target  # State error
-        u_bar = -np.matmul(K, y_error.detach().cpu().numpy().T).flatten()  # Shape (M,)
+
+        # 计算控制输入
+        y_error = y_t - y_target
+        u_bar = -np.matmul(K, y_error.detach().cpu().numpy().T).T.flatten()
         return u_bar  # Numpy array, shape (M,)
 
     def design_lqr_controller(self):
@@ -302,7 +309,7 @@ class Koopman_Model:
 
         return K  # Shape (M, P)
 def main():
-    # Device configuration
+    # 配置设备
     global device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -315,14 +322,14 @@ def main():
 
     pde = PDE2D_NS(nx, ny, Lx, Ly, viscosity)
 
-    control_positions = pde.control_positions  # List of (i, j)
-    M = len(control_positions)  # Number of controls
+    control_positions = pde.control_positions  # 列表 (i, j)
+    M = len(control_positions)  # 控制数
 
-    # Convert control positions to indices in flattened array
+    # 将控制位置转换为展平数组中的索引
     control_indices = [i * ny + j for i, j in control_positions]
 
     # Generate training data
-    num_samples = 500
+    num_samples = 300
     time_steps = 20
     dt = 0.01
     x_t_list = []
@@ -337,30 +344,30 @@ def main():
 
         # Generate control inputs
         control_input_scale = 0.1
-        u_sequence = np.random.randn(time_steps + 1, M) * control_input_scale
+        u_sequence = np.random.randn(time_steps, M) * control_input_scale
 
         # Simulate the system
         t_span = [0, dt * time_steps]
         omega_sequence = pde.simulate(omega0, u_sequence, t_span, time_steps)
 
         # Build training samples
-        x_t_list.append(omega_sequence[:-1, :, :].reshape(-1, nx * ny))     # x(t)
-        x_t1_list.append(omega_sequence[1:, :, :].reshape(-1, nx * ny))     # x(t+1)
-        u_t_list.append(u_sequence[:-1, :])
+        x_t_list.append(omega_sequence[:-1, :])  # x(t)
+        x_t1_list.append(omega_sequence[1:, :])  # x(t+1)
+        u_t_list.append(u_sequence[:])
 
-    # Convert to tensors
+    # 转换为张量
     x_t = torch.tensor(np.concatenate(x_t_list, axis=0), dtype=torch.float32)
     x_t1 = torch.tensor(np.concatenate(x_t1_list, axis=0), dtype=torch.float32)
     u_t = torch.tensor(np.concatenate(u_t_list, axis=0), dtype=torch.float32)
 
-    # Move data to device
+    # 将数据移到设备上
     x_t = x_t.to(device)
     x_t1 = x_t1.to(device)
     u_t = u_t.to(device)
 
-    # Datasets and data loaders
+    # 数据集和数据加载器
     dataset = data.TensorDataset(x_t, x_t1, u_t)
-    # Split into training and validation sets
+    # 划分训练集和验证集
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = data.random_split(dataset, [train_size, val_size])
@@ -368,39 +375,39 @@ def main():
     train_dataloader = data.DataLoader(train_dataset, batch_size=64, shuffle=True)
     val_dataloader = data.DataLoader(val_dataset, batch_size=64, shuffle=False)
 
-    # Define model
+    # 定义模型
     nxny = nx * ny
     hidden_dim = 512
     P = nxny
     model = Koopman_Model(nxny, M, hidden_dim, P, control_indices)
 
-    # Training model
+    # 训练模型
     num_epochs = 100
     patience = 10
     best_val_loss = float('inf')
     epochs_no_improve = 0
 
     for epoch in range(num_epochs):
-        # Set training mode
+        # 设定为训练模式
         model.encoder.train()
         model.decoder.train()
         total_loss = 0
         for batch_x_t, batch_x_t1, batch_u_t in train_dataloader:
-            B_u_t = torch.zeros_like(batch_x_t1, device=device)
-            B_u_t[:, control_indices] = batch_u_t
+            B = torch.tensor(pde.B, dtype=torch.float32).to(device)
+            B_u_t = torch.matmul(B, batch_u_t.unsqueeze(-1)).squeeze(-1)
             batch_x_t1_prime = batch_x_t1 - B_u_t
             loss = model.train_step(batch_x_t, batch_x_t1_prime)
             total_loss += loss
         avg_train_loss = total_loss / len(train_dataloader)
 
-        # Validation
+        # 验证
         model.encoder.eval()
         model.decoder.eval()
         val_loss = 0
         with torch.no_grad():
             for batch_x_t, batch_x_t1, batch_u_t in val_dataloader:
-                B_u_t = torch.zeros_like(batch_x_t1, device=device)
-                B_u_t[:, control_indices] = batch_u_t
+                B = torch.tensor(pde.B, dtype=torch.float32).to(device)
+                B_u_t = torch.matmul(B, batch_u_t.unsqueeze(-1)).squeeze(-1)
                 batch_x_t1_prime = batch_x_t1 - B_u_t
                 loss = model.compute_loss(batch_x_t, batch_x_t1_prime)
                 val_loss += loss
@@ -408,7 +415,7 @@ def main():
 
         print(f"Epoch {epoch + 1}, Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
 
-        # Early stopping
+        # 早停策略
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             epochs_no_improve = 0
@@ -428,18 +435,20 @@ def main():
         # Linear prediction
         y_t1_pred = torch.matmul(y_t, model.A.T)
 
-        # Decode predicted y_t1 to get x_t1_pred
-        x_t1_pred = model.decoder(y_t1_pred)
+        # Decode
+        x_t1_pred_prime = model.decoder(y_t1_pred)
+
+        B = torch.tensor(pde.B, dtype=torch.float32).to(device)
+        B_u = torch.matmul(B, batch_u_t.unsqueeze(-1)).squeeze(-1)
+        # Add control influence to get predicted x(t+1)
+        x_t1_pred = x_t1_pred_prime + B_u
 
         # Compute prediction error
-        prediction_error = nn.MSELoss()(x_t1_pred, batch_x_t1)
+        pred_error = nn.MSELoss()(x_t1_pred, batch_x_t1)
+        print(f"Prediction error on validation batch: {pred_error.item():.6f}")
 
-        print(f"Prediction Error: {prediction_error.item():.6f}")
-
-        # Visualize the true and predicted omega fields
-        import matplotlib.pyplot as plt
-
-        idx = 0  # Index of sample to visualize
+        # Visualization
+        idx = 0  # Visualize the first sample
         omega_true = batch_x_t1[idx].cpu().numpy().reshape(nx, ny)
         omega_pred = x_t1_pred[idx].cpu().numpy().reshape(nx, ny)
 
@@ -454,24 +463,28 @@ def main():
         plt.colorbar()
         plt.show()
 
-        # Design LQR controller
+    # Design LQR controller
     K = model.design_lqr_controller()
 
-    # Control simulation parameters
-    num_control_steps = 200
-    dt = 0.01
+    # Control target
+    x_target = np.zeros((nx, ny))
+    x_target[nx // 4:3 * nx // 4, ny // 4:3 * ny // 4] = 1
 
     # Initial condition for simulation
     omega = np.random.randn(nx, ny) * 0.1
-    omega_tensor = torch.tensor(omega.reshape(1, -1), dtype=torch.float32).to(device)
+    omega_tensor = torch.tensor(omega.reshape(1, -1).flatten(), dtype=torch.float32).unsqueeze(0).to(device)
 
-    # Target embedding (e.g., zero state)
-    y_target = torch.zeros(model.P, device=device)
+    # Control simulation parameters
+    time_steps = 300
 
     # Store omega fields for visualization
     omega_history = [omega.copy()]
 
-    for t in range(num_control_steps):
+    # Encode target state
+    x_target = torch.tensor(x_target.flatten(), dtype=torch.float32).unsqueeze(0).to(device)
+    y_target = model.encoder(x_target)
+
+    for t in range(time_steps):
         # Encode current state
         y_t = model.encoder(omega_tensor)
 
@@ -490,7 +503,7 @@ def main():
         omega_tensor = torch.tensor(omega.reshape(1, -1), dtype=torch.float32).to(device)
 
         # Store omega for visualization
-        omega_history.append(omega.copy())
+        omega_history.append(omega.reshape(nx, ny))
 
     print(len(omega_history))
     print(omega_history[0].shape)
