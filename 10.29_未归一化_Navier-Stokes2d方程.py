@@ -509,14 +509,14 @@ def main():
     plt.figure(figsize=(12, 4))
 
     plt.subplot(1, 2, 1)
-    plt.imshow(omega_history[0][2:-2][2:-2], cmap='jet', origin='lower')
+    plt.imshow(omega_history[0][2:-2, 2:-2], cmap='jet', origin='lower')
     plt.colorbar()
     plt.xlabel('X Position')
     plt.ylabel('Y Position')
     plt.title('Distribution at Initial Time')
 
     plt.subplot(1, 2, 2)
-    plt.imshow(omega_history[-1][2:-2][2:-2], cmap='jet', origin='lower')
+    plt.imshow(omega_history[-1][2:-2, 2:-2], cmap='jet', origin='lower')
     plt.colorbar()
     plt.xlabel('X Position')
     plt.ylabel('Y Position')
