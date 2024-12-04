@@ -424,12 +424,14 @@ def main():
 
     # TODO  从这里开始有区别  另外就是反应速率和扩散速率的问题
     # Control target
-    x_target = np.zeros((nx, ny))
-    x_target[nx//8:3*nx//8, ny//8:3*ny//8] = 1
+    x_target = np.ones((nx, ny))
+    # x_target = np.zeros((nx, ny))
+    # x_target[nx//8:3*nx//8, ny//8:3*ny//8] = 1
 
     # Initial state
-    u0 = np.zeros((nx, ny))
-    u0[nx//4:3*nx//4, nx//2:] = 1
+    u0 = np.random.randn(nx, ny)*0.1
+    # u0 = np.zeros((nx, ny))
+    # u0[nx//4:3*nx//4, nx//2:] = 1
 
     # 模拟时间
     time_steps = 600

@@ -64,10 +64,10 @@ class PDE2D_NS:
                      dx2dy2 * (-omega[1:-1, 1:-1])) / denom
             )
             # Apply boundary conditions
-            psi[0, :] = psi[1, :]
-            psi[-1, :] = psi[-2, :]
-            psi[:, 0] = psi[:, 1]
-            psi[:, -1] = psi[:, -2]
+            psi[0, :] = 0
+            psi[-1, :] = 0
+            psi[:, 0] = 0
+            psi[:, -1] = 0
             max_diff = np.max(np.abs(psi - psi_old))
             if max_diff < 1e-6:
                 break
@@ -94,7 +94,6 @@ class PDE2D_NS:
 
     def simulate(self, omega0, u_sequence, t_span, time_steps):
         dt = (t_span[1] - t_span[0]) / time_steps
-        times = np.linspace(t_span[0], t_span[1], time_steps + 1)
 
         N = self.nx * self.ny
         omega = np.zeros((time_steps + 1, N))
@@ -329,8 +328,8 @@ def main():
     control_indices = [i * ny + j for i, j in control_positions]
 
     # Generate training data
-    num_samples = 300
-    time_steps = 20
+    num_samples = 500
+    time_steps = 40
     dt = 0.01
     x_t_list = []
     x_t1_list = []
@@ -471,11 +470,11 @@ def main():
     x_target[nx // 4:3 * nx // 4, ny // 4:3 * ny // 4] = 1
 
     # Initial condition for simulation
-    omega = np.random.randn(nx, ny) * 0.1
+    omega = np.random.randn(nx, ny)*0.1
     omega_tensor = torch.tensor(omega.reshape(1, -1).flatten(), dtype=torch.float32).unsqueeze(0).to(device)
 
     # Control simulation parameters
-    time_steps = 300
+    time_steps = 400
 
     # Store omega fields for visualization
     omega_history = [omega.copy()]
@@ -510,14 +509,14 @@ def main():
     plt.figure(figsize=(12, 4))
 
     plt.subplot(1, 2, 1)
-    plt.imshow(omega_history[0], cmap='jet', origin='lower')
+    plt.imshow(omega_history[0][2:-2][2:-2], cmap='jet', origin='lower')
     plt.colorbar()
     plt.xlabel('X Position')
     plt.ylabel('Y Position')
     plt.title('Distribution at Initial Time')
 
     plt.subplot(1, 2, 2)
-    plt.imshow(omega_history[-1], cmap='jet', origin='lower')
+    plt.imshow(omega_history[-1][2:-2][2:-2], cmap='jet', origin='lower')
     plt.colorbar()
     plt.xlabel('X Position')
     plt.ylabel('Y Position')
