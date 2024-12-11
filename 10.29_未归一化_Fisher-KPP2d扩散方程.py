@@ -266,9 +266,9 @@ def main():
     ny = 30  # y方向的节点数
     dx = 1.0 / nx  # x方向的空间步长
     dy = 1.0 / ny  # y方向的空间步长
-    D = 0.01       # 扩散系数
+    D = 0.1       # 扩散系数
     # r为0.1 看起来可以实现一定的控制，r为1时，反应速率太快，不适合做到合适的控制
-    r = 0.1        # 反应速率
+    r = 0.5        # 反应速率
 
     pde = PDE2D(nx, ny, dx, dy, D, r)
 
@@ -424,9 +424,19 @@ def main():
 
     # TODO  从这里开始有区别  另外就是反应速率和扩散速率的问题
     # Control target
-    x_target = np.ones((nx, ny))
-    # x_target = np.zeros((nx, ny))
-    # x_target[nx//8:3*nx//8, ny//8:3*ny//8] = 1
+    # 控制目标
+    # x_target = np.ones((nx, ny))  # 全1状态   稳态解
+    x_target = np.zeros((nx, ny))  # 全0状态  稳态解
+    # x_target[nx//4:3*nx//4, ny//4:3*ny//4] = 1  # 局部高值区域
+    # 行波解的波形函数
+    # def wave_solution(x, y, t, c=1.0):
+    #     return np.exp(-c * (x + y - c * t))
+    #
+    # # 生成行波解作为目标状态
+    # x_coords = np.linspace(0, 1, nx)
+    # y_coords = np.linspace(0, 1, ny)
+    # X, Y = np.meshgrid(x_coords, y_coords)
+    # x_target = wave_solution(X, Y, t=0)  # 行波解
 
     # Initial state
     u0 = np.random.randn(nx, ny)*0.1
