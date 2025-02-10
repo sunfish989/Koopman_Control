@@ -404,12 +404,12 @@ def main():
 
         plt.figure(figsize=(12, 4))
         plt.subplot(1, 3, 1)
-        plt.imshow(T_true, cmap='hot', origin='lower')
+        plt.imshow(T_true, cmap='jet', origin='lower')
         plt.colorbar()
         plt.title('True x(t+1)')
 
         plt.subplot(1, 3, 2)
-        plt.imshow(T_pred, cmap='hot', origin='lower')
+        plt.imshow(T_pred, cmap='jet', origin='lower')
         plt.colorbar()
         plt.title('Predicted x(t+1)')
 
@@ -426,17 +426,17 @@ def main():
     # Control target
     # 控制目标
     # x_target = np.ones((nx, ny))  # 全1状态   稳态解
-    x_target = np.zeros((nx, ny))  # 全0状态  稳态解
+    # x_target = np.zeros((nx, ny))  # 全0状态  稳态解
     # x_target[nx//4:3*nx//4, ny//4:3*ny//4] = 1  # 局部高值区域
     # 行波解的波形函数
-    # def wave_solution(x, y, t, c=1.0):
-    #     return np.exp(-c * (x + y - c * t))
-    #
-    # # 生成行波解作为目标状态
-    # x_coords = np.linspace(0, 1, nx)
-    # y_coords = np.linspace(0, 1, ny)
-    # X, Y = np.meshgrid(x_coords, y_coords)
-    # x_target = wave_solution(X, Y, t=0)  # 行波解
+    def wave_solution(x, y, t, c=1.0):
+        return np.exp(-c * (x + y - c * t))
+
+    # 生成行波解作为目标状态
+    x_coords = np.linspace(0, 1, nx)
+    y_coords = np.linspace(0, 1, ny)
+    X, Y = np.meshgrid(x_coords, y_coords)
+    x_target = wave_solution(X, Y, t=0)  # 行波解
 
     # Initial state
     u0 = np.random.randn(nx, ny)*0.1
@@ -478,14 +478,14 @@ def main():
     plt.figure(figsize=(12, 4))
 
     plt.subplot(1, 2, 1)
-    plt.imshow(u_full[0], cmap='hot', origin='lower')
+    plt.imshow(u_full[0], cmap='jet', origin='lower')
     plt.colorbar()
     plt.xlabel('X Position')
     plt.ylabel('Y Position')
     plt.title('Temperature Distribution at Initial Time')
 
     plt.subplot(1, 2, 2)
-    plt.imshow(u_full[-1], cmap='hot', origin='lower')
+    plt.imshow(u_full[-1], cmap='jet', origin='lower')
     plt.colorbar()
     plt.xlabel('X Position')
     plt.ylabel('Y Position')

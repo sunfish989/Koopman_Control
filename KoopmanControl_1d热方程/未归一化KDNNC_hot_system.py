@@ -261,7 +261,7 @@ def main():
     nx = 50  # Number of spatial nodes
     dx = 1.0 / nx  # Spatial step size
     # 想要对换01状态的控制的话，需要较小的温度传播系数。想让一个全局稳定状态的话，可以有较大的传播系数
-    alpha = 0.01  # Thermal diffusivity coefficient
+    alpha = 0.008  # Thermal diffusivity coefficient
     M = 25  # Number of controlled nodes
 
     # Control positions: every other point
@@ -327,7 +327,8 @@ def main():
     patience = 20
     best_val_loss = float('inf')
     epochs_no_improve = 0
-
+    train_loss_change = []
+    val_loss_change = []
     for epoch in range(num_epochs):
         # 设置训练模式
         model.encoder.train()
@@ -354,6 +355,8 @@ def main():
                 val_loss += loss
         avg_val_loss = val_loss / len(val_dataloader)
 
+        train_loss_change.append(avg_train_loss)
+        val_loss_change.append(avg_val_loss)
         print(f"Epoch {epoch + 1}, Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
 
         # 早停机制
@@ -390,19 +393,56 @@ def main():
 
         # 可视化
         import matplotlib.pyplot as plt
+        # Visualization of results
+        plt.rcParams['font.sans-serif'] = ['Heiti TC']  # 设置中文字体为黑体
+        plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
+        # 对于双栏论文的整页宽度图
+        plt.figure(figsize=(12, 4))  # 宽度设为10英寸（约为双栏宽度），高度3.5英寸
+
+        # 设置更大的字体大小
+        SMALL_SIZE = 8
+        MEDIUM_SIZE = 9
+        BIGGER_SIZE = 10
+
+        plt.rc('font', size=SMALL_SIZE)  # 控制默认文字大小
+        plt.rc('axes', titlesize=MEDIUM_SIZE)  # 标题文字大小
+        plt.rc('axes', labelsize=SMALL_SIZE)  # x和y轴标签文字大小
+        plt.rc('xtick', labelsize=SMALL_SIZE)  # x轴刻度标签大小
+        plt.rc('ytick', labelsize=SMALL_SIZE)  # y轴刻度标签大小
+        plt.rc('legend', fontsize=SMALL_SIZE)  # 图例文字大小
+        plt.rc('figure', titlesize=BIGGER_SIZE)  # figure标题文字大小
 
         idx = 0  # 可视化第一个样本
-        plt.figure(figsize=(12, 4))
-        plt.subplot(1, 2, 1)
-        plt.plot(batch_x_t1[idx].cpu().numpy(), label='True x(t+1)')
-        plt.plot(x_t1_pred[idx].cpu().numpy(), label='Predicted x(t+1)')
-        plt.legend()
-        plt.title('True vs Predicted x(t+1)')
 
-        plt.subplot(1, 2, 2)
+
+        plt.subplot(1, 3, 1)
+        plt.xlabel('迭代次数')
+        plt.ylabel('误差Loss')
+        plt.plot(train_loss_change, label='训练误差')
+        plt.plot(val_loss_change, label='验证误差')
+        plt.legend()
+        plt.title('(a)Koopman神经网络模型误差变化')
+
+        plt.subplot(1, 3, 2)
+        plt.xlabel('时间步长')
+        plt.ylabel('系统状态')
+        plt.plot(batch_x_t1[idx].cpu().numpy(), label='真实状态')
+        plt.plot(x_t1_pred[idx].cpu().numpy(), label='预测状态')
+        plt.legend()
+        plt.title('(b)Koopman神经网络模型拟合能力')
+
+        plt.subplot(1, 3, 3)
+        plt.xlabel('时间步长')
+        plt.ylabel('误差大小')
         plt.plot((batch_x_t1[idx] - x_t1_pred[idx]).cpu().numpy())
-        plt.title('Prediction Error')
+        plt.title('(c)Koopman神经网络模型预测误差')
+
+        # 调整子图间距
+        plt.tight_layout()
+        plt.savefig('2.png')
         plt.show()
+        plt.close()
 
     # 设计LQR控制器
     K = model.design_lqr_controller()
@@ -420,6 +460,10 @@ def main():
     T = np.zeros((time_steps + 1, nx))
     T[0, :] = T_init
     u_sequence = np.zeros((time_steps, M))
+
+    # 无控制的系统演化
+    T_uncontrolled = np.zeros((time_steps + 1, nx))
+    T_uncontrolled[0, :] = T_init
 
     # 编码目标状态
     x_target = torch.tensor(T_target, dtype=torch.float32).unsqueeze(0).to(device)
@@ -441,14 +485,42 @@ def main():
         T_t1 = pde.simulate(T[t, :], np.array([u_bar]), [t * dt, (t + 1) * dt])
         T[t + 1, :] = T_t1[-1]
 
+        # 无控制的系统 (u=0)
+        T_t1_uncontrolled = pde.simulate(T_uncontrolled[t, :], np.zeros_like([u_bar]), [t * dt, (t + 1) * dt])
+        T_uncontrolled[t + 1, :] = T_t1_uncontrolled[-1]
+
     # Visualization of results
-    plt.figure(figsize=(10, 6))
-    plt.imshow(T.T, aspect='auto', cmap='hot', origin='lower')
-    plt.colorbar()
-    plt.xlabel('Time Step')
-    plt.ylabel('Spatial Position')
-    plt.title('Temperature Distribution Over Time')
+    plt.rcParams['font.sans-serif'] = ['Heiti TC']  # 设置中文字体为黑体
+    plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
+    plt.figure(figsize=(12, 4))
+    # 子图1：无控制系统
+    plt.subplot(1, 3, 1)
+    im1 = plt.imshow(T_uncontrolled.T, aspect='auto', cmap='hot', origin='lower')
+    plt.colorbar(im1)
+    plt.xlabel('时间步长')
+    plt.ylabel('空间位置')
+    plt.title('(a)无控制系统的温度分布演化')
+
+    # 子图2：有控制系统
+    plt.subplot(1, 3, 2)
+    im2 = plt.imshow(T.T, aspect='auto', cmap='hot', origin='lower')
+    plt.colorbar(im2)
+    plt.xlabel('时间步长')
+    plt.ylabel('空间位置')
+    plt.title('(b)KDNNC下的温度分布演化')
+
+    plt.subplot(1, 3, 3)
+    plt.plot(u_sequence)
+    plt.xlabel('时间步长')
+    plt.ylabel('控制输入')
+    plt.title('(c)控制输入随时间的变化')
+
+    # 调整子图间距
+    plt.tight_layout()
+    plt.savefig('1.png')
     plt.show()
+    plt.close()
 
 
 if __name__ == "__main__":
