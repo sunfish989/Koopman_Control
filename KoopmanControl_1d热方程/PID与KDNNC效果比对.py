@@ -478,7 +478,6 @@ def main():
     for t in range(time_steps):
         # 计算控制误差 (仅控制点处的误差)
         current_error = T_target[control_positions] - T_pid[t, control_positions]
-
         # 计算控制输入
         u_pid = pid.compute_control(current_error)
         u_sequence_pid[t, :] = u_pid
@@ -506,6 +505,10 @@ def main():
     energy_pid = compute_energy(u_sequence_pid)
 
     conv_time_uncontrol = compute_convergence_time(T_uncontrolled, T_target)
+    print(conv_time_uncontrol)
+    print(conv_time_pid)
+    print(conv_time_koopman)
+
     import matplotlib.pyplot as plt
     # Visualization of results
     plt.rcParams['font.sans-serif'] = ['Heiti TC']  # 设置中文字体为黑体
@@ -543,6 +546,12 @@ def main():
     plt.tight_layout()
     plt.savefig('comparison.png')
     plt.show()
+    tmp1 = np.mean((T - T_target) ** 2, axis=1)
+    tmp2 = np.mean((T_pid - T_target) ** 2, axis=1)
+    tmp3 = np.mean((T_uncontrolled - T_target) ** 2, axis=1)
+    print(tmp1[100], tmp1[200], tmp1[400], tmp1[600])
+    print(tmp2[100], tmp2[200], tmp2[400], tmp2[600])
+    print(tmp3[100], tmp3[200], tmp3[400], tmp3[600])
 
 
 if __name__ == "__main__":
