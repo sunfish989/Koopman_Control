@@ -281,261 +281,198 @@ def main():
     dy = 1.0 / ny  # Spatial step size in y
     alpha = 0.005  # Thermal diffusivity coefficient
 
-    pde = PDE2D(nx, ny, dx, dy, alpha)
+    # Parameters for control density experiment
+    control_densities = [0.3, 0.4, 0.5]  # Control density values
+    train_errors_over_time = []  # Store training errors over epochs for different control densities
+    control_mses_over_time = []  # Store control MSEs over time steps for different control densities
 
-    control_positions = pde.control_positions  # List of (i, j)
-    M = len(control_positions)  # Number of controls
+    for control_density in control_densities:
+        print(f"Running experiment with control density: {control_density}")
 
-    # Convert control positions to indices in flattened array
-    control_indices = [i * ny + j for i, j in control_positions]
+        # Initialize PDE with different control positions
+        pde = PDE2D(nx, ny, dx, dy, alpha)
+        control_positions = []
+        for i in range(nx):
+            for j in range(ny):
+                if i % int(1 / control_density) == 0 and j % int(1 / control_density) == 0:
+                    control_positions.append((i, j))
+        pde.control_positions = control_positions
+        M = len(control_positions)  # Number of controls
+        pde.M = M
+        pde.B = np.zeros((pde.nx * pde.ny, pde.M))
+        # Convert control positions to indices in flattened array
+        control_indices = [i * ny + j for i, j in control_positions]
 
-    # Generate training data
-    num_samples = 1000
-    time_steps = 60
-    global dt
-    dt = 0.01
-    x_t_list = []
-    x_t1_list = []
-    u_t_list = []
+        # Generate training data (same as before)
+        num_samples = 1000
+        time_steps = 60
+        dt = 0.01
+        x_t_list = []
+        x_t1_list = []
+        u_t_list = []
+        np.random.seed(0)  # For reproducibility
+        for _ in range(num_samples):
+            T0 = np.random.rand(nx, ny)
+            control_input_scale = 0.05
+            u_sequence = -control_input_scale * np.ones((time_steps+1, M)) + 2 * control_input_scale * np.random.rand(time_steps + 1, M)
+            t_span = [0, dt * time_steps]
+            T_sequence = pde.simulate(T0, u_sequence, t_span)
+            x_t_list.append(T_sequence[1:-2, :])
+            x_t1_list.append(T_sequence[2:-1, :])
+            u_t_list.append(u_sequence[1:-1, :])
 
-    np.random.seed(0)  # 为了可重复性
+        # Convert to tensors and move to device
+        x_t = torch.tensor(np.concatenate(x_t_list, axis=0), dtype=torch.float32).to(device)
+        x_t1 = torch.tensor(np.concatenate(x_t1_list, axis=0), dtype=torch.float32).to(device)
+        u_t = torch.tensor(np.concatenate(u_t_list, axis=0), dtype=torch.float32).to(device)
 
-    for _ in range(num_samples):
-        # Random initial temperature distribution
-        T0 = np.random.rand(nx, ny)
+        # Define model
+        nxny = nx * ny
+        hidden_dim = 1024
+        P = nxny
+        model = Koopman_Model(nxny, M, hidden_dim, P, control_indices, device)
 
-        # Generate training data with control inputs
-        control_input_scale = 0.05  # Adjust the scale as needed
-        # u_sequence = np.zeros((time_steps + 1, M)) * control_input_scale
-        u_sequence = -control_input_scale * np.ones((time_steps+1, M)) + 2 * control_input_scale * np.random.rand(time_steps + 1, M)
-
-        # Simulate the system
-        t_span = [0, dt * time_steps]
-        T_sequence = pde.simulate(T0, u_sequence, t_span)  # Shape (time_steps + 1, nx*ny)
-
-        # Build training samples
-        x_t_list.append(T_sequence[1:-2, :])  # x(t)
-        x_t1_list.append(T_sequence[2:-1, :])  # x(t+1)
-        u_t_list.append(u_sequence[1:-1, :])
-
-    # Convert to tensors
-    x_t = torch.tensor(np.concatenate(x_t_list, axis=0), dtype=torch.float32)
-    x_t1 = torch.tensor(np.concatenate(x_t1_list, axis=0), dtype=torch.float32)
-    u_t = torch.tensor(np.concatenate(u_t_list, axis=0), dtype=torch.float32)
-
-    # Move data to device
-    x_t = x_t.to(device)
-    x_t1 = x_t1.to(device)
-    u_t = u_t.to(device)
-
-    # Datasets and data loaders
-    dataset = data.TensorDataset(x_t, x_t1, u_t)
-    # Split into training and validation sets
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = data.random_split(dataset, [train_size, val_size])
-
-    train_dataloader = data.DataLoader(train_dataset, batch_size=128, shuffle=True)
-    val_dataloader = data.DataLoader(val_dataset, batch_size=128, shuffle=False)
-
-    # Define model
-    nxny = nx * ny
-    hidden_dim = 1024
-    P = nxny
-    model = Koopman_Model(nxny, M, hidden_dim, P, control_indices, device)
-
-    # Training model
-    num_epochs = 60
-    patience = 10
-    best_val_loss = float('inf')
-    epochs_no_improve = 0
-
-    for epoch in range(num_epochs):
-        # Set training mode
-        model.encoder.train()
-        model.decoder.train()
-        total_loss = 0
-        for batch_x_t, batch_x_t1, batch_u_t in train_dataloader:
-            B_u_t = torch.zeros_like(batch_x_t1, device=device)
-            B_u_t[:, control_indices] = batch_u_t
-            batch_x_t1_prime = batch_x_t1 - dt * B_u_t
-            loss = model.train_step(batch_x_t, batch_x_t1_prime)
-            total_loss += loss
-        avg_train_loss = total_loss / len(train_dataloader)
-
-        # Validation
-        model.encoder.eval()
-        model.decoder.eval()
-        val_loss = 0
-        with torch.no_grad():
-            for batch_x_t, batch_x_t1, batch_u_t in val_dataloader:
+        # Training model
+        num_epochs = 60
+        patience = 10
+        best_val_loss = float('inf')
+        epochs_no_improve = 0
+        train_errors = []  # Record training errors over epochs
+        for epoch in range(num_epochs):
+            model.encoder.train()
+            model.decoder.train()
+            total_loss = 0
+            for batch_x_t, batch_x_t1, batch_u_t in data.DataLoader(data.TensorDataset(x_t, x_t1, u_t), batch_size=128,
+                                                                    shuffle=True):
                 B_u_t = torch.zeros_like(batch_x_t1, device=device)
                 B_u_t[:, control_indices] = batch_u_t
                 batch_x_t1_prime = batch_x_t1 - dt * B_u_t
-                loss = model.compute_loss(batch_x_t, batch_x_t1_prime)
-                val_loss += loss
-        avg_val_loss = val_loss / len(val_dataloader)
+                loss = model.train_step(batch_x_t, batch_x_t1_prime)
+                total_loss += loss
+            avg_train_loss = total_loss / len(x_t_list)
+            train_errors.append(avg_train_loss)
 
-        print(f"Epoch {epoch + 1}, Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
+            # Validation (same as before)
+            model.encoder.eval()
+            model.decoder.eval()
+            val_loss = 0
+            with torch.no_grad():
+                for batch_x_t, batch_x_t1, batch_u_t in data.DataLoader(data.TensorDataset(x_t, x_t1, u_t),
+                                                                        batch_size=128, shuffle=False):
+                    B_u_t = torch.zeros_like(batch_x_t1, device=device)
+                    B_u_t[:, control_indices] = batch_u_t
+                    batch_x_t1_prime = batch_x_t1 - dt * B_u_t
+                    loss = model.compute_loss(batch_x_t, batch_x_t1_prime)
+                    val_loss += loss
+            avg_val_loss = val_loss / len(x_t_list)
 
-        # Early stopping
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            epochs_no_improve = 0
-        else:
-            epochs_no_improve += 1
-            if epochs_no_improve >= patience:
-                print("Early stopping!")
-                break
-
-    # After training, compare prediction with ground truth
-    with torch.no_grad():
-        batch_x_t, batch_x_t1, batch_u_t = next(iter(val_dataloader))
-
-        # Encode current state
-        y_t = model.encoder(batch_x_t)
-
-        # Linear prediction
-        y_t1_pred = torch.matmul(y_t, model.A.T)
-
-        # Decode
-        x_t1_pred_prime = model.decoder(y_t1_pred)
-
-        B_u = torch.zeros_like(batch_x_t1, device=device)
-        B_u[:, control_indices] = batch_u_t  # Control influence
-        # Add control influence to get predicted x(t+1)
-        x_t1_pred = x_t1_pred_prime + dt * B_u
-
-        # Compute prediction error
-        pred_error = nn.MSELoss()(x_t1_pred, batch_x_t1)
-        print(f"Prediction error on validation batch: {pred_error.item():.6f}")
-
-        # Visualization
-        idx = 0  # Visualize the first sample
-        T_true = batch_x_t1[idx].cpu().numpy().reshape(nx, ny)
-        T_pred = x_t1_pred[idx].cpu().numpy().reshape(nx, ny)
-
-        plt.figure(figsize=(12, 4))
-        plt.subplot(1, 3, 1)
-        plt.imshow(T_true, cmap='hot', origin='lower')
-        plt.colorbar()
-        plt.title('True x(t+1)')
-
-        plt.subplot(1, 3, 2)
-        plt.imshow(T_pred, cmap='hot', origin='lower')
-        plt.colorbar()
-        plt.title('Predicted x(t+1)')
-
-        plt.subplot(1, 3, 3)
-        plt.imshow(T_true - T_pred, cmap='bwr', origin='lower')
-        plt.colorbar()
-        plt.title('Prediction Error')
-        plt.show()
-
-    # Design LQR controller
-    K = model.design_lqr_controller()
-
-    # Initial state
-    # T_init = np.zeros((nx, ny))
-    # T_init[nx // 2:, :] = 1  # Bottom half is 1, top half is 0
-    T_init = np.zeros((nx, ny))
-    # Create a diagonal gradient
-    for i in range(nx):
-        for j in range(ny):
-            distance = abs(i - nx // 2) + abs(j - ny // 2)
-            T_init[i, j] = 1 - (distance / (nx + ny))  # Smooth gradient
-
-    # Target state
-    # T_target = np.zeros((nx, ny))
-    # T_target[:nx // 2, :] = 1  # Top half is 1, bottom half is 0
-    # T_target[nx // 8:3 * nx // 8, ny // 8:3 * ny // 8] = 1
-    # Target state
-    T_target = np.zeros((nx, ny))
-    # Create a ring-shaped target with smooth transition
-    radius = nx // 3
-    sigma = 5  # Controls the smoothness of the transition
-
-    for i in range(nx):
-        for j in range(ny):
-            x = i - nx // 2
-            y = j - ny // 2
-            dist = np.sqrt(x ** 2 + y ** 2)
-
-            # Smooth transition using a Gaussian-like function
-            if dist < radius:
-                T_target[i, j] = 0.1
-            elif dist < radius + 5 * sigma:
-                # Transition region
-                normalized_dist = (dist - radius) / sigma
-                T_target[i, j] = 0.8 * np.exp(-0.5 * normalized_dist ** 2)
-            else:
-                T_target[i, j] = 0.1
-
-    # Optional: Add a small gradient to make the background not completely zero
-    background_gradient = 0.1
-    for i in range(nx):
-        for j in range(ny):
-            # Add a slight radial gradient to the background
-            T_target[i, j] += background_gradient * (1 - np.sqrt(i ** 2 + j ** 2) / (nx * np.sqrt(2)))
-            # Clip values to ensure they stay within [0, 1]
-            T_target[i, j] = np.clip(T_target[i, j], 0, 1)
+            print(f"Epoch {epoch + 1}, Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
 
 
+        # Record training errors over epochs
+        train_errors_over_time.append(train_errors)
 
-    # Simulation of control process
-    time_steps = 600
-    N = nx * ny
-    T = np.zeros((time_steps + 1, N))
-    T[0, :] = T_init.flatten()
-    u_sequence = np.zeros((time_steps, M))
+        # Design LQR controller
+        K = model.design_lqr_controller()
 
-    # Encode target state
-    x_target = torch.tensor(T_target.flatten(), dtype=torch.float32).unsqueeze(0).to(device)
-    y_target = model.encoder(x_target)
+        # Initial state
+        # T_init = np.zeros((nx, ny))
+        # T_init[nx // 2:, :] = 1  # Bottom half is 1, top half is 0
+        T_init = np.zeros((nx, ny))
+        # Create a diagonal gradient
+        for i in range(nx):
+            for j in range(ny):
+                distance = abs(i - nx // 2) + abs(j - ny // 2)
+                T_init[i, j] = 1 - (distance / (nx + ny))  # Smooth gradient
 
-    for t in range(time_steps):
-        x_t_np = T[t, :]
-        x_t = torch.tensor(x_t_np, dtype=torch.float32).unsqueeze(0).to(device)
+        # Target state
+        # T_target = np.zeros((nx, ny))
+        # T_target[:nx // 2, :] = 1  # Top half is 1, bottom half is 0
+        # T_target[nx // 8:3 * nx // 8, ny // 8:3 * ny // 8] = 1
+        # Target state
+        T_target = np.zeros((nx, ny))
+        # Create a ring-shaped target with smooth transition
+        radius = nx // 3
+        sigma = 5  # Controls the smoothness of the transition
 
-        # Encode the state
-        y_t = model.encoder(x_t)
+        for i in range(nx):
+            for j in range(ny):
+                x = i - nx // 2
+                y = j - ny // 2
+                dist = np.sqrt(x ** 2 + y ** 2)
 
-        # Compute control input
-        u_bar = model.compute_control(y_t, y_target, K)  # Shape (M,)
+                # Smooth transition using a Gaussian-like function
+                if dist < radius:
+                    T_target[i, j] = 0.1
+                elif dist < radius + 5 * sigma:
+                    # Transition region
+                    normalized_dist = (dist - radius) / sigma
+                    T_target[i, j] = 0.8 * np.exp(-0.5 * normalized_dist ** 2)
+                else:
+                    T_target[i, j] = 0.1
 
-        u_bar = u_bar/dt
+        # Optional: Add a small gradient to make the background not completely zero
+        background_gradient = 0.1
+        for i in range(nx):
+            for j in range(ny):
+                # Add a slight radial gradient to the background
+                T_target[i, j] += background_gradient * (1 - np.sqrt(i ** 2 + j ** 2) / (nx * np.sqrt(2)))
+                # Clip values to ensure they stay within [0, 1]
+                T_target[i, j] = np.clip(T_target[i, j], 0, 1)
 
-        u_sequence[t, :] = u_bar  # Record control input
 
-        # Simulate next time step
-        T_t1 = pde.simulate(x_t_np.reshape(nx, ny), np.array([u_bar]), [t * dt, (t + 1) * dt])
-        T[t + 1, :] = T_t1[-1]
+        time_steps = 600
+        N = nx * ny
+        T = np.zeros((time_steps + 1, N))
+        T[0, :] = T_init.flatten()
+        u_sequence = np.zeros((time_steps, M))
+        x_target = torch.tensor(T_target.flatten(), dtype=torch.float32).unsqueeze(0).to(device)
+        y_target = model.encoder(x_target)
+        control_mses = []  # Record control MSEs over time steps
+        for t in range(time_steps):
+            x_t_np = T[t, :]
+            x_t = torch.tensor(x_t_np, dtype=torch.float32).unsqueeze(0).to(device)
+            y_t = model.encoder(x_t)
+            u_bar = model.compute_control(y_t, y_target, K)
+            u_bar = u_bar / dt
+            u_sequence[t, :] = u_bar
 
-    # Visualization of results
-    T_full = T.reshape(time_steps + 1, nx, ny)
+            T_t1 = pde.simulate(x_t_np.reshape(nx, ny), np.array([u_bar]), [t * dt, (t + 1) * dt])
+            T[t + 1, :] = T_t1[-1]
+            # Compute control MSE at this time step
+            control_mse = np.mean((T[t + 1].reshape(nx, ny) - T_target) ** 2)
+            control_mses.append(control_mse)
 
-    # Generate intermediate states at different time points
-    time_steps_for_visualization = [100, 200, 300, 400, 500, 600]
+        # Record control MSEs over time steps
+        control_mses_over_time.append(control_mses)
+
     # Visualization of results
     plt.rcParams['font.sans-serif'] = ['Heiti TC']  # 设置中文字体为黑体
     plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
-    # Plot intermediate states
-    plt.figure(figsize=(15, 10))
-    plt.subplot(3, 3, 1)
-    plt.imshow(T_full[0], cmap='hot', origin='lower')
-    plt.colorbar()
-    plt.title(f'初始温度分布Init')
-    for i, t in enumerate(time_steps_for_visualization):
-        plt.subplot(3, 3, i + 2)
-        plt.imshow(T_full[t], cmap='hot', origin='lower')
-        plt.colorbar()
-        plt.title(f'{t/100}s时温度分布')
-    plt.subplot(3, 3, 9)
-    plt.imshow(T_target, cmap='hot', origin='lower')
-    plt.title(f'目标温度分布Target')
+    # Plot results
+    plt.figure(figsize=(12, 6))
+
+    # Plot training errors over epochs
+    plt.subplot(1, 2, 1)
+    for i, control_density in enumerate(control_densities):
+        plt.plot(range(len(train_errors_over_time[i])), train_errors_over_time[i], label=f"控制点密度={control_density}")
+    plt.xlabel("迭代次数")
+    plt.ylabel("训练误差")
+    plt.title("模型训练误差随时间变化情况")
+    plt.legend()
+
+    # Plot control MSEs over time steps
+    plt.subplot(1, 2, 2)
+    for i, control_density in enumerate(control_densities):
+        plt.plot(range(len(control_mses_over_time[i])), control_mses_over_time[i], label=f"控制点密度={control_density}")
+    plt.xlabel("时间步数")
+    plt.ylabel("控制MSE（对数刻度）")
+    plt.title("控制MSE随时间变化情况（对数刻度）")
+    plt.yscale('log')  # 设置y轴为对数刻度
+    plt.legend()
 
     plt.tight_layout()
-    plt.savefig('3.png')
+    plt.savefig("4.png")
     plt.show()
     plt.close()
 
