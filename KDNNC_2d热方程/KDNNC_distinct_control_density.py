@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 
 class PDE2D:
-    def __init__(self, nx, ny, dx, dy, alpha):
+    def __init__(self, nx, ny, dx, dy, alpha, x_interval, y_interval):
         self.nx = nx  # Number of spatial nodes in x
         self.ny = ny  # Number of spatial nodes in y
         self.dx = dx  # Spatial step size in x
@@ -19,12 +19,12 @@ class PDE2D:
         # Build the Laplacian operator for 2D
         self.L = self.build_laplacian(nx, ny, dx, dy)
 
-        # Control positions every 2 positions in both x and y
+        # Control positions based on x_interval and y_interval
         self.control_positions = []
-        for i in range(0, nx, 2):
-            for j in range(0, ny, 2):
+        for i in range(0, nx, x_interval):
+            for j in range(0, ny, y_interval):
                 self.control_positions.append((i, j))
-        self.M = len(self.control_positions)
+        self.M = len(self.control_positions)  # Number of controls
 
         # Control influence matrix B, size (nx*ny, M)
         self.B = np.zeros((self.nx * self.ny, self.M))
@@ -40,30 +40,22 @@ class PDE2D:
                 idx = i * ny + j
                 # Center element
                 L[idx, idx] = -2 * self.alpha * (1 / dx ** 2 + 1 / dy ** 2)
-
                 # Neumann BC (zero derivative at boundaries)
-                # Left neighbor
                 if i > 0:
                     idx_left = (i - 1) * ny + j
                     L[idx, idx_left] += self.alpha / dx ** 2
                 else:
                     L[idx, idx] += self.alpha / dx ** 2
-
-                # Right neighbor
                 if i < nx - 1:
                     idx_right = (i + 1) * ny + j
                     L[idx, idx_right] += self.alpha / dx ** 2
                 else:
                     L[idx, idx] += self.alpha / dx ** 2
-
-                # Down neighbor
                 if j > 0:
                     idx_down = i * ny + (j - 1)
                     L[idx, idx_down] += self.alpha / dy ** 2
                 else:
                     L[idx, idx] += self.alpha / dy ** 2
-
-                # Up neighbor
                 if j < ny - 1:
                     idx_up = i * ny + (j + 1)
                     L[idx, idx_up] += self.alpha / dy ** 2
@@ -86,11 +78,8 @@ class PDE2D:
         N = self.nx * self.ny
         T = np.zeros((time_steps + 1, N))
         T[0, :] = T0.flatten()
-
         for t in range(time_steps):
             u_t = u_sequence[t, :]  # Shape (M,)
-
-            # Free evolution: x(t+1) = x(t) + dt * L * x(t)
             free_evolution = T[t, :] + dt * np.dot(self.L, T[t, :])
 
             # Control influence: B * u(t)
@@ -281,29 +270,23 @@ def main():
     dy = 1.0 / ny  # Spatial step size in y
     alpha = 0.005  # Thermal diffusivity coefficient
 
-    # Parameters for control density experiment
-    control_densities = [0.3, 0.4, 0.5]  # Control density values
-    train_errors_over_time = []  # Store training errors over epochs for different control densities
-    control_mses_over_time = []  # Store control MSEs over time steps for different control densities
+    # Parameters for control intervals experiment
+    control_intervals = [(2, 2), (3, 2), (3, 3), (3, 4)]  # (x_interval, y_interval)
+    train_errors_over_time = []  # Store training errors over epochs for different control intervals
+    control_mses_over_time = []  # Store control MSEs over time steps for different control intervals
 
-    for control_density in control_densities:
-        print(f"Running experiment with control density: {control_density}")
+    for x_interval, y_interval in control_intervals:
+        print(f"Running experiment with x_interval={x_interval}, y_interval={y_interval}")
 
         # Initialize PDE with different control positions
-        pde = PDE2D(nx, ny, dx, dy, alpha)
-        control_positions = []
-        for i in range(nx):
-            for j in range(ny):
-                if i % int(1 / control_density) == 0 and j % int(1 / control_density) == 0:
-                    control_positions.append((i, j))
-        pde.control_positions = control_positions
+        pde = PDE2D(nx, ny, dx, dy, alpha, x_interval, y_interval)
+        control_positions = pde.control_positions
         M = len(control_positions)  # Number of controls
-        pde.M = M
-        pde.B = np.zeros((pde.nx * pde.ny, pde.M))
-        # Convert control positions to indices in flattened array
         control_indices = [i * ny + j for i, j in control_positions]
-
-        # Generate training data (same as before)
+        print(pde.control_positions)
+        print(pde.B)
+        print(M)
+        # Generate training data
         num_samples = 1000
         time_steps = 60
         dt = 0.01
@@ -314,7 +297,8 @@ def main():
         for _ in range(num_samples):
             T0 = np.random.rand(nx, ny)
             control_input_scale = 0.05
-            u_sequence = -control_input_scale * np.ones((time_steps+1, M)) + 2 * control_input_scale * np.random.rand(time_steps + 1, M)
+            u_sequence = -control_input_scale * np.ones((time_steps + 1, M)) + 2 * control_input_scale * np.random.rand(
+                time_steps + 1, M)
             t_span = [0, dt * time_steps]
             T_sequence = pde.simulate(T0, u_sequence, t_span)
             x_t_list.append(T_sequence[1:-2, :])
@@ -334,9 +318,6 @@ def main():
 
         # Training model
         num_epochs = 60
-        patience = 10
-        best_val_loss = float('inf')
-        epochs_no_improve = 0
         train_errors = []  # Record training errors over epochs
         for epoch in range(num_epochs):
             model.encoder.train()
@@ -367,7 +348,6 @@ def main():
             avg_val_loss = val_loss / len(x_t_list)
 
             print(f"Epoch {epoch + 1}, Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
-
 
         # Record training errors over epochs
         train_errors_over_time.append(train_errors)
@@ -420,8 +400,7 @@ def main():
                 # Clip values to ensure they stay within [0, 1]
                 T_target[i, j] = np.clip(T_target[i, j], 0, 1)
 
-
-        time_steps = 600
+        time_steps = 100
         N = nx * ny
         T = np.zeros((time_steps + 1, N))
         T[0, :] = T_init.flatten()
@@ -454,8 +433,9 @@ def main():
 
     # Plot training errors over epochs
     plt.subplot(1, 2, 1)
-    for i, control_density in enumerate(control_densities):
-        plt.plot(range(len(train_errors_over_time[i])), train_errors_over_time[i], label=f"控制点密度={control_density}")
+    for i, (x_interval, y_interval) in enumerate(control_intervals):
+        label = f"x_interval={x_interval}, y_interval={y_interval}"
+        plt.plot(range(len(train_errors_over_time[i])), train_errors_over_time[i], label=label)
     plt.xlabel("迭代次数")
     plt.ylabel("训练误差")
     plt.title("模型训练误差随时间变化情况")
@@ -463,8 +443,9 @@ def main():
 
     # Plot control MSEs over time steps
     plt.subplot(1, 2, 2)
-    for i, control_density in enumerate(control_densities):
-        plt.plot(range(len(control_mses_over_time[i])), control_mses_over_time[i], label=f"控制点密度={control_density}")
+    for i, (x_interval, y_interval) in enumerate(control_intervals):
+        label = f"x_interval={x_interval}, y_interval={y_interval}"
+        plt.plot(range(len(control_mses_over_time[i])), control_mses_over_time[i], label=label)
     plt.xlabel("时间步数")
     plt.ylabel("控制MSE（对数刻度）")
     plt.title("控制MSE随时间变化情况（对数刻度）")
@@ -479,5 +460,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

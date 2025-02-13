@@ -285,6 +285,7 @@ def main():
 
     control_positions = pde.control_positions  # List of (i, j)
     M = len(control_positions)  # Number of controls
+    print(M)
 
     # Convert control positions to indices in flattened array
     control_indices = [i * ny + j for i, j in control_positions]
