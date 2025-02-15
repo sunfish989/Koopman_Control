@@ -65,21 +65,34 @@ class PDE2D:
                     L[idx, idx] += self.D / dy ** 2
         return L
 
-    def simulate(self, u0, u_sequence, t_span):
+    def simulate(self, T0, u_sequence, t_span):
+        """
+        Simulate the system using explicit Euler discretization with safeguards.
+        """
         time_steps = len(u_sequence)
         dt = (t_span[1] - t_span[0]) / time_steps
         N = self.nx * self.ny
-        u = np.zeros((time_steps + 1, N))
-        u[0, :] = u0.flatten()
+        T = np.zeros((time_steps + 1, N))
+        T[0, :] = T0.flatten()
+
         for t in range(time_steps):
             u_t = u_sequence[t, :]  # Shape (M,)
-            # 自由演化: u(t+1) = u(t) + dt * (L * u(t) + r * u(t) * (1 - u(t)))
-            free_evolution = u[t, :] + dt * (np.dot(self.L, u[t, :]) + self.r * u[t, :] * (1 - u[t, :]))
-            # 控制影响: B * u(t)
+
+            # Free evolution: x(t+1) = x(t) + dt * L * x(t)
+            laplacian_term = np.dot(self.L, T[t, :])
+            growth_term = self.r * T[t, :] * (1 - T[t, :])  # Logistic growth
+
+            # Combine terms
+            free_evolution = T[t, :] + dt * (laplacian_term + growth_term)
+
+            # Control influence: B * u(t)
             control_influence = np.dot(self.B, u_t)
-            # 总状态更新
-            u[t + 1, :] = free_evolution + dt * control_influence
-        return u  # Shape (time_steps + 1, nx*ny)
+
+            # Total state update
+            T[t + 1, :] = free_evolution + dt * control_influence
+
+
+        return T  # Shape (time_steps + 1, nx * ny)
 
 class Encoder(nn.Module):
     def __init__(self, nxny, M, hidden_dim, P, control_indices):
@@ -233,9 +246,10 @@ def main():
     dx = 1.0 / nx
     dy = 1.0 / ny
     D = 0.1
-    r = 0.5
+    r = 0.1
     control_densities = [0.5]
     train_errors_over_time = []
+    val_errors_over_time = []
     control_mses_over_time = []
 
     for control_density in control_densities:
@@ -243,29 +257,39 @@ def main():
         pde = PDE2D(nx, ny, dx, dy, D, r, control_density)
         control_indices = [i * ny + j for i, j in pde.control_positions]
         M = pde.M
+        print(M)
 
         # 生成训练数据
-        num_samples = 1000
-        time_steps = 60
-        dt = 0.01
+        num_samples = 200
+        time_steps = 600
+        dt = 0.001
         x_t_list = []
         x_t1_list = []
         u_t_list = []
         np.random.seed(0)
         for _ in range(num_samples):
-            u0 = np.random.rand(nx, ny)
+            T0 = np.random.rand(nx, ny)
             control_input_scale = 0.05
             u_sequence = -control_input_scale + 2 * control_input_scale * np.random.rand(time_steps + 1, M)
             t_span = [0, dt * time_steps]
-            u_sequence_full = pde.simulate(u0, u_sequence, t_span)
-            x_t_list.append(u_sequence_full[1:-2, :])
-            x_t1_list.append(u_sequence_full[2:-1, :])
+            T_sequence = pde.simulate(T0, u_sequence, t_span)
+            x_t_list.append(T_sequence[1:-2, :])
+            x_t1_list.append(T_sequence[2:-1, :])
             u_t_list.append(u_sequence[1:-1, :])
 
         # 转换为张量
         x_t = torch.tensor(np.concatenate(x_t_list, axis=0), dtype=torch.float32).to(device)
         x_t1 = torch.tensor(np.concatenate(x_t1_list, axis=0), dtype=torch.float32).to(device)
         u_t = torch.tensor(np.concatenate(u_t_list, axis=0), dtype=torch.float32).to(device)
+
+        # Datasets and data loaders
+        dataset = data.TensorDataset(x_t, x_t1, u_t)
+        # Split into training and validation sets
+        train_size = int(0.8 * len(dataset))
+        val_size = len(dataset) - train_size
+        train_dataset, val_dataset = data.random_split(dataset, [train_size, val_size])
+        train_dataloader = data.DataLoader(train_dataset, batch_size=128, shuffle=True)
+        val_dataloader = data.DataLoader(val_dataset, batch_size=128, shuffle=False)
 
         # 定义模型
         nxny = nx * ny
@@ -275,21 +299,22 @@ def main():
 
         # 训练模型
         num_epochs = 100
-        patience = 10
+        patience = 7
         best_val_loss = float('inf')
         epochs_no_improve = 0
         train_errors = []
+        val_errors = []
         for epoch in range(num_epochs):
             model.encoder.train()
             model.decoder.train()
             total_loss = 0
-            for batch_x_t, batch_x_t1, batch_u_t in data.DataLoader(data.TensorDataset(x_t, x_t1, u_t), batch_size=128, shuffle=True):
+            for batch_x_t, batch_x_t1, batch_u_t in train_dataloader:
                 B_u_t = torch.zeros_like(batch_x_t1, device=device)
                 B_u_t[:, control_indices] = batch_u_t
                 batch_x_t1_prime = batch_x_t1 - dt * B_u_t
                 loss = model.train_step(batch_x_t, batch_x_t1_prime)
                 total_loss += loss
-            avg_train_loss = total_loss / len(x_t_list)
+            avg_train_loss = total_loss / len(train_dataloader)
             train_errors.append(avg_train_loss)
 
             # 验证
@@ -297,13 +322,14 @@ def main():
             model.decoder.eval()
             val_loss = 0
             with torch.no_grad():
-                for batch_x_t, batch_x_t1, batch_u_t in data.DataLoader(data.TensorDataset(x_t, x_t1, u_t), batch_size=128, shuffle=False):
+                for batch_x_t, batch_x_t1, batch_u_t in val_dataloader:
                     B_u_t = torch.zeros_like(batch_x_t1, device=device)
                     B_u_t[:, control_indices] = batch_u_t
                     batch_x_t1_prime = batch_x_t1 - dt * B_u_t
                     loss = model.compute_loss(batch_x_t, batch_x_t1_prime)
                     val_loss += loss
-            avg_val_loss = val_loss / len(x_t_list)
+            avg_val_loss = val_loss / len(val_dataloader)
+            val_errors.append(avg_val_loss)
             print(f"Epoch {epoch + 1}, Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
 
             if avg_val_loss < best_val_loss:
@@ -316,6 +342,7 @@ def main():
                 break
 
         train_errors_over_time.append(train_errors)
+        val_errors_over_time.append(val_errors)
         # After training, compare prediction with ground truth
         with torch.no_grad():
             batch_x_t, batch_x_t1, batch_u_t = next(iter(val_dataloader))
@@ -332,7 +359,7 @@ def main():
             B_u = torch.zeros_like(batch_x_t1, device=device)
             B_u[:, control_indices] = batch_u_t  # Control influence
             # Add control influence to get predicted x(t+1)
-            x_t1_pred = x_t1_pred_prime + B_u
+            x_t1_pred = x_t1_pred_prime + dt * B_u
 
             # Compute prediction error
             pred_error = nn.MSELoss()(x_t1_pred, batch_x_t1)
@@ -370,70 +397,73 @@ def main():
         # x_target = np.zeros((nx, ny))  # 全0状态  稳态解
         # x_target[nx//4:3*nx//4, ny//4:3*ny//4] = 1  # 局部高值区域
         # 行波解的波形函数
-        def wave_solution(x, y, t, c=1.0):
+        def wave_solution(x, y, t, c=0.5):
             return np.exp(-c * (x + y - c * t))
 
         # 生成行波解作为目标状态
         x_coords = np.linspace(0, 1, nx)
         y_coords = np.linspace(0, 1, ny)
         X, Y = np.meshgrid(x_coords, y_coords)
-        x_target = wave_solution(X, Y, t=0)  # 行波解
+        T_target = wave_solution(X, Y, t=0)  # 行波解
 
         # Initial state
-        u0 = np.random.randn(nx, ny)*0.1
+        T_init = np.random.randn(nx, ny)*0.1
         # u0 = np.zeros((nx, ny))
         # u0[nx//4:3*nx//4, nx//2:] = 1
 
         # 模拟闭环系统
-        time_steps = 400
+        time_steps = 4000
         N = nx * ny
-        u = np.zeros((time_steps + 1, N))
-        u[0, :] = u0.flatten()
+        T = np.zeros((time_steps + 1, N))
+        T[0, :] = T_init.flatten()
         u_t_sequence = np.zeros((time_steps, M))
-        x_target_tensor = torch.tensor(x_target.flatten(), dtype=torch.float32).unsqueeze(0).to(device)
+        x_target_tensor = torch.tensor(T_target.flatten(), dtype=torch.float32).unsqueeze(0).to(device)
         y_target = model.encoder(x_target_tensor)
         control_mses = []
 
         for t in range(time_steps):
-            x_t_np = u[t, :]
+            x_t_np = T[t, :]
             x_t = torch.tensor(x_t_np, dtype=torch.float32).unsqueeze(0).to(device)
             y_t = model.encoder(x_t)
             u_bar = model.compute_control(y_t, y_target, K)
-            u_bar = u_bar / dt
+            # u_bar = u_bar / dt
             u_t_sequence[t, :] = u_bar
-            u_t1 = pde.simulate(x_t_np.reshape(nx, ny), np.array([u_bar]), [t * dt, (t + 1) * dt])
-            u[t + 1, :] = u_t1[-1]
-            control_mse = np.mean((u[t + 1].reshape(nx, ny) - x_target) ** 2)
+            T_t1 = pde.simulate(x_t_np.reshape(nx, ny), np.array([u_bar]), [t * dt, (t + 1) * dt])
+            T[t + 1, :] = T_t1[-1]
+            control_mse = np.mean((T[t + 1].reshape(nx, ny) - T_target) ** 2)
             control_mses.append(control_mse)
 
         control_mses_over_time.append(control_mses)
         # Visualization of results
         T_full = T.reshape(time_steps + 1, nx, ny)
         # Generate intermediate states at different time points
-        time_steps_for_visualization = [100, 200, 300, 400]
+        time_steps_for_visualization = [300, 500, 1000, 2000]
         # Visualization of results
         plt.rcParams['font.sans-serif'] = ['Heiti TC']  # 设置中文字体为黑体
         plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
         # Plot intermediate states
         plt.figure(figsize=(15, 10))
-        plt.subplot(3, 3, 1)
-        plt.imshow(T_full[0], cmap='hot', origin='lower')
-        plt.colorbar()
-        plt.title(f'初始温度分布Init')
+        plt.subplot(2, 3, 1)
+        plt.imshow(T_full[0], cmap='jet', origin='lower')
+        plt.title(f'初始波动分布Init')
         for i, t in enumerate(time_steps_for_visualization):
-            plt.subplot(3, 3, i + 2)
-            plt.imshow(T_full[t], cmap='hot', origin='lower')
-            plt.colorbar()
-            plt.title(f'{t / 100}s时温度分布')
-        plt.subplot(3, 3, 9)
-        plt.imshow(T_target, cmap='hot', origin='lower')
-        plt.title(f'目标温度分布Target')
+            plt.subplot(2, 3, i + 2)
+            plt.imshow(T_full[t], cmap='jet', origin='lower')
+            plt.title(f'{t / 1000}s时波动分布')
+        plt.subplot(2, 3, 6)
+        plt.imshow(T_target, cmap='jet', origin='lower')
+        plt.title(f'目标行波解Target')
 
         plt.tight_layout()
-        plt.savefig('3.png')
+        plt.savefig('change_system.png')
         plt.show()
         plt.close()
-
+    print(train_errors_over_time[0])
+    print(val_errors_over_time[0])
+    print(control_mses_over_time[0][0], control_mses_over_time[0][100], control_mses_over_time[0][300],
+          control_mses_over_time[0][500],
+          control_mses_over_time[0][1000], control_mses_over_time[0][1500], control_mses_over_time[0][2000],
+          control_mses_over_time[0][-1])
     # 可视化结果
     plt.rcParams['font.sans-serif'] = ['Heiti TC']
     plt.rcParams['axes.unicode_minus'] = False
@@ -443,6 +473,7 @@ def main():
         plt.plot(range(len(train_errors_over_time[i])), train_errors_over_time[i], label=f"控制点密度={control_density}")
     plt.xlabel("迭代次数")
     plt.ylabel("训练误差")
+
     plt.title("模型训练误差随时间变化情况")
     plt.legend()
 
