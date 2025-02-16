@@ -149,7 +149,6 @@ class PDE2D_NS:
 
         return omega_new.flatten()
 
-
 class Encoder(nn.Module):
     def __init__(self, nxny, M, hidden_dim, P, control_indices):
         super(Encoder, self).__init__()
