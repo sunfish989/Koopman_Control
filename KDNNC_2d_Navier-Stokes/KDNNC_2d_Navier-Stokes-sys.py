@@ -316,8 +316,8 @@ def main():
     val_errors_over_time = []
     control_mses_over_time = []
 
-    num_samples = 20
-    time_steps = 40
+    num_samples = 200
+    time_steps = 2000
     dt = 0.001
     control_input_scale = 0.05
 
