@@ -250,8 +250,8 @@ def main():
     ny = 30
     dx = 1.0 / nx
     dy = 1.0 / ny
-    Du = 0.16
-    Dv = 0.08
+    Du = 0.04
+    Dv = 0.16
     F = 0.04
     k = 0.06
     control_densities = [0.5]
@@ -303,7 +303,7 @@ def main():
 
         # 训练模型
         num_epochs = 100
-        patience = 7
+        patience = 10
         best_val_loss = float('inf')
         epochs_no_improve = 0
         train_errors = []
@@ -371,6 +371,9 @@ def main():
 
             return U_target, V_target
 
+        U_init, V_init = generate_target_pattern(nx, ny, dx, dy)
+        X_init = np.hstack([U_init.flatten(), V_init.flatten()])  # Shape (2 * nx * ny,)
+        '''
         def ring_distribution(nx, ny, dx, dy, radius=10, thickness=2):
             # Create a grid
             x = np.linspace(0, nx * dx, nx)
@@ -393,29 +396,47 @@ def main():
             # Define V_target as complementary to U_target
             V_target = 1.0 - U_target  # Ensure U + V ≈ 1
             return U_target, V_target
+        '''
+        Lx = Ly = np.pi
+        '''
+        # 初始化网格
+        x = np.linspace(0, Lx, nx)
+        y = np.linspace(0, Ly, ny)
+        X, Y = np.meshgrid(x, y)
 
-        U_init, V_init = generate_target_pattern(nx, ny, dx, dy)
-        X_init = np.hstack([U_init.flatten(), V_init.flatten()])  # Shape (2 * nx * ny,)
+        # 行波解的初始条件
+        c = 0.4  # 波速
 
-        U_target, V_target = ring_distribution(nx, ny, dx, dy)
+        def wave_solution(x, y, t, c):
+            return np.exp(-c * (x + y - c * t))
 
+        U_target = wave_solution(X, Y, t=0, c=c)
+        V_target = 1 - U_target
+
+        
+        X_target = np.hstack([U_target.flatten(), V_target.flatten()])  # Shape (2 * nx * ny,)
+        X_target_tensor = torch.tensor(X_target, dtype=torch.float32).unsqueeze(0).to(device)
+        y_target = model.encoder(X_target_tensor)
+        '''
+
+        '''设置目标状态'''
+
+        def traveling_wave_solution(x, y, t, c=0.5):
+            return np.exp(-c * ((x - c * t) ** 2 + (y - c * t) ** 2))
+
+        # 定义网格和参数
+        x_coords = np.linspace(0, Lx, nx)
+        y_coords = np.linspace(0, Ly, ny)
+        X, Y = np.meshgrid(x_coords, y_coords)
+        # 设置波速和时间
+        c = 0.5
+        t2 = 0.5
+        U_target = traveling_wave_solution(X, Y, t2, c)
+        V_target = 1 - U_target
         X_target = np.hstack([U_target.flatten(), V_target.flatten()])  # Shape (2 * nx * ny,)
         X_target_tensor = torch.tensor(X_target, dtype=torch.float32).unsqueeze(0).to(device)
         y_target = model.encoder(X_target_tensor)
 
-        '''
-        # Initial state
-        U_init = np.ones((nx, ny))
-        V_init = np.zeros((nx, ny))
-        U_init[nx // 2 - 2:nx // 2 + 2, ny // 2 - 2:ny // 2 + 2] = 0
-        V_init[nx // 2 - 2:nx // 2 + 2, ny // 2 - 2:ny // 2 + 2] = 1
-
-        # Initial state
-        U_init = np.ones((nx, ny))
-        V_init = np.zeros((nx, ny))
-        U_init[nx // 2 - 2:nx // 2 + 2, ny // 2 - 2:ny // 2 + 2] = 0
-        V_init[nx // 2 - 2:nx // 2 + 2, ny // 2 - 2:ny // 2 + 2] = 1
-        '''
 
         # 模拟闭环系统
         time_steps = 3000
@@ -462,27 +483,27 @@ def main():
         plt.figure(figsize=(18, 6))
 
         # 绘制不同时间段的目标状态和实际状态
-        time_steps_for_visualization = [0, 300, 500, 1000, 2000]
+        time_steps_for_visualization = [0, 300, 500, 1000, 2000, 2500]
 
         # 绘制实际状态和目标状态
         for i, t in enumerate(time_steps_for_visualization):
             # 第一行：绘制 U 的实际状态
-            plt.subplot(2, 6, i + 1)
+            plt.subplot(2, 7, i + 1)
             plt.imshow(U_full[t], cmap='jet', origin='lower')
-            plt.title(f"U at t={t}")
+            plt.title(f"U at t={t/1000}s")
 
             # 第二行：绘制 V 的实际状态
-            plt.subplot(2, 6, i + 7)
+            plt.subplot(2, 7, i + 8)
             plt.imshow(V_full[t], cmap='jet', origin='lower')
-            plt.title(f"V at t={t}")
+            plt.title(f"V at t={t/1000}s")
 
             # 如果是每行的最后一个子图，绘制目标状态
-            if (i + 1) % 5 == 0:
-                plt.subplot(2, 6, i + 2)  # 目标状态绘制在下一个子图
-                plt.imshow(U_target, cmap='jet', origin='lower', alpha=0.5)
+            if (i + 1) % 6 == 0:
+                plt.subplot(2, 7, i + 2)  # 目标状态绘制在下一个子图
+                plt.imshow(U_target, cmap='jet', origin='lower')
                 plt.title("U Target")
-                plt.subplot(2, 6, i + 8)  # 目标状态绘制在下一个子图
-                plt.imshow(V_target, cmap='jet', origin='lower', alpha=0.5)
+                plt.subplot(2, 7, i + 9)  # 目标状态绘制在下一个子图
+                plt.imshow(V_target, cmap='jet', origin='lower')
                 plt.title("V Target")
 
         plt.tight_layout()
