@@ -440,7 +440,7 @@ def main():
 
         # 调整子图间距
         plt.tight_layout()
-        plt.savefig('2.png')
+        plt.savefig('预测效果对比.png')
         plt.show()
         plt.close()
 

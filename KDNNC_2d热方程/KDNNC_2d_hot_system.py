@@ -99,17 +99,8 @@ class PDE2D:
             # Total state update
             T[t + 1, :] = free_evolution + dt * control_influence
 
+
         return T  # Shape (time_steps + 1, nx * ny)
-
-    def odefun(self, t, T_flat, u_t):
-        """
-        Define the ODE function for continuous-time simulation.
-        This is no longer used in the discrete-time version.
-        """
-        B_u = np.dot(self.B, u_t)  # Control influence
-        dTdt = np.dot(self.L, T_flat) + B_u
-        return dTdt
-
 
 class Encoder(nn.Module):
     def __init__(self, nxny, M, hidden_dim, P, control_indices):
@@ -291,10 +282,10 @@ def main():
     control_indices = [i * ny + j for i, j in control_positions]
 
     # Generate training data
-    num_samples = 1000
-    time_steps = 60
+    num_samples = 200
+    time_steps = 600
     global dt
-    dt = 0.01
+    dt = 0.001
     x_t_list = []
     x_t1_list = []
     u_t_list = []
@@ -319,15 +310,11 @@ def main():
         x_t1_list.append(T_sequence[2:-1, :])  # x(t+1)
         u_t_list.append(u_sequence[1:-1, :])
 
-    # Convert to tensors
-    x_t = torch.tensor(np.concatenate(x_t_list, axis=0), dtype=torch.float32)
-    x_t1 = torch.tensor(np.concatenate(x_t1_list, axis=0), dtype=torch.float32)
-    u_t = torch.tensor(np.concatenate(u_t_list, axis=0), dtype=torch.float32)
+    # 转换为张量
+    x_t = torch.tensor(np.concatenate(x_t_list, axis=0), dtype=torch.float32).to(device)
+    x_t1 = torch.tensor(np.concatenate(x_t1_list, axis=0), dtype=torch.float32).to(device)
+    u_t = torch.tensor(np.concatenate(u_t_list, axis=0), dtype=torch.float32).to(device)
 
-    # Move data to device
-    x_t = x_t.to(device)
-    x_t1 = x_t1.to(device)
-    u_t = u_t.to(device)
 
     # Datasets and data loaders
     dataset = data.TensorDataset(x_t, x_t1, u_t)
@@ -341,13 +328,13 @@ def main():
 
     # Define model
     nxny = nx * ny
-    hidden_dim = 1024
+    hidden_dim = 512
     P = nxny
     model = Koopman_Model(nxny, M, hidden_dim, P, control_indices, device)
 
     # Training model
-    num_epochs = 60
-    patience = 10
+    num_epochs = 100
+    patience = 8
     best_val_loss = float('inf')
     epochs_no_improve = 0
 
@@ -416,22 +403,30 @@ def main():
         T_true = batch_x_t1[idx].cpu().numpy().reshape(nx, ny)
         T_pred = x_t1_pred[idx].cpu().numpy().reshape(nx, ny)
 
+        # Visualization of results
+        plt.rcParams['font.sans-serif'] = ['Heiti TC']  # 设置中文字体为黑体
+        plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
         plt.figure(figsize=(12, 4))
         plt.subplot(1, 3, 1)
         plt.imshow(T_true, cmap='hot', origin='lower')
         plt.colorbar()
-        plt.title('True x(t+1)')
+        plt.title('t+1时刻真实分布')
 
         plt.subplot(1, 3, 2)
         plt.imshow(T_pred, cmap='hot', origin='lower')
         plt.colorbar()
-        plt.title('Predicted x(t+1)')
+        plt.title('t+1时刻预测分布')
 
         plt.subplot(1, 3, 3)
         plt.imshow(T_true - T_pred, cmap='bwr', origin='lower')
         plt.colorbar()
-        plt.title('Prediction Error')
+        plt.title('误差分布')
+        plt.savefig('预测效果对比.png')
         plt.show()
+        plt.close()
+
+
 
     # Design LQR controller
     K = model.design_lqr_controller()
