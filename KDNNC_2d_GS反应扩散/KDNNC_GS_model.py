@@ -259,8 +259,8 @@ def main():
     val_errors_over_time = []
     control_mses_over_time = []
 
-    num_samples = 200
-    time_steps = 1000
+    num_samples = 20
+    time_steps = 100
     dt = 0.001
     control_input_scale = 0.05
 
@@ -302,8 +302,8 @@ def main():
         model = Koopman_Model(nxny, gs.M, hidden_dim, P, control_indices, device)
 
         # 训练模型
-        num_epochs = 100
-        patience = 10
+        num_epochs = 10
+        patience = 8
         best_val_loss = float('inf')
         epochs_no_improve = 0
         train_errors = []
@@ -538,6 +538,44 @@ def main():
         plt.tight_layout()
         plt.savefig("results_compare_gs.png")
         plt.show()
+
+
+        '''增加u和v控制序列的变化情况'''
+        # 转换操作
+        u_t_reshaped = u_t_sequence.reshape(time_steps, 2, gs.M)  # 先按 (time_steps, 2, gs.M) 重塑
+        u_temp1 = u_t_reshaped[:, 0, :]  # 提取 u 控制序列
+        u_temp2 = u_t_reshaped[:, 1, :]  # 提取 v 控制序列
+
+        plt.rcParams['font.sans-serif'] = ['Heiti TC']  # 设置中文字体为黑体
+        plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
+        # 每隔 n 个点绘制一个点
+        n = 3  # 每隔 3 个点绘制一个点
+
+        # 绘制 u 控制输入变化
+        plt.figure(figsize=(10, 8))  # 增大画布尺寸
+        for i in range(u_temp1.shape[1]):
+            plt.plot(u_temp1[::n, i])
+        plt.xlabel('时间步长', fontsize=14)  # 增大字体
+        plt.ylabel('控制输入', fontsize=14)
+        plt.title('物质u控制输入随时间的变化', fontsize=16, pad=20)  # 增加标题与图之间的间距
+        plt.tight_layout()  # 自动调整布局
+        plt.savefig('控制u变化.png')  # 提高分辨率，适合论文
+        plt.show()
+
+        # 绘制 v 控制输入变化
+        plt.figure(figsize=(10, 8))
+        for i in range(u_temp2.shape[1]):
+            plt.plot(u_temp2[::n, i])
+        plt.xlabel('时间步长', fontsize=14)
+        plt.ylabel('控制输入', fontsize=14)
+        plt.title('物质v控制输入随时间的变化', fontsize=16, pad=20)
+        plt.tight_layout()
+        plt.savefig('控制v变化.png')
+        plt.show()
+
+
+
 
 
 if __name__ == "__main__":
