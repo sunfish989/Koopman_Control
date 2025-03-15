@@ -39,7 +39,7 @@ plt.xlabel('Time Steps', fontsize=12)
 plt.ylabel('Mean Squared Error (MSE)', fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.7)  # 添加网格线
 plt.tight_layout()  # 自动调整布局
-plt.savefig('control_mse_comparison.png', dpi=300, bbox_inches='tight')  # 保存图片
+plt.savefig('control_mse_comparison.png', bbox_inches='tight')  # 保存图片
 plt.show()
 
 # 绘制控制能量消耗对比图
@@ -56,5 +56,5 @@ plt.xlabel('Time Steps', fontsize=12)
 plt.ylabel('Energy Consumption', fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.7)  # 添加网格线
 plt.tight_layout()  # 自动调整布局
-plt.savefig('control_energy_comparison.png', dpi=300, bbox_inches='tight')  # 保存图片
+plt.savefig('control_energy_comparison.png', bbox_inches='tight')  # 保存图片
 plt.show()
