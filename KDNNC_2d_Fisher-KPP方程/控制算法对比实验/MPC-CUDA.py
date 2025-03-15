@@ -22,14 +22,14 @@ class PDE2D:
                     self.control_positions.append((i, j))
         self.M = len(self.control_positions)
         # 控制影响矩阵B，大小为 (nx*ny, M)
-        self.B = torch.zeros((self.nx * self.ny, self.M), device='cuda')  # 使用 PyTorch 张量
+        self.B = torch.zeros((self.nx * self.ny, self.M), device='cuda', dtype=torch.float64)  # 使用 double 类型
         for k, (i, j) in enumerate(self.control_positions):
             idx = i * self.ny + j
             self.B[idx, k] = 1.0
 
     def build_laplacian(self, nx, ny, dx, dy):
         N = nx * ny
-        L = torch.zeros((N, N), device='cuda')  # 使用 PyTorch 张量
+        L = torch.zeros((N, N), device='cuda', dtype=torch.float64)  # 使用 double 类型
         for i in range(nx):
             for j in range(ny):
                 idx = i * ny + j
@@ -65,11 +65,11 @@ class PDE2D:
         time_steps = len(u_sequence)
         dt = (t_span[1] - t_span[0]) / time_steps
         N = self.nx * self.ny
-        T = torch.zeros((time_steps + 1, N), device='cuda')  # 在 GPU 上创建张量
-        T[0, :] = torch.tensor(T0.flatten(), device='cuda')  # 初始条件转移到 GPU
+        T = torch.zeros((time_steps + 1, N), device='cuda', dtype=torch.float64)  # 使用 double 类型
+        T[0, :] = torch.tensor(T0.flatten(), device='cuda', dtype=torch.float64)  # 初始条件转移到 GPU
 
         for t in range(time_steps):
-            u_t = torch.tensor(u_sequence[t, :], device='cuda')  # 控制输入转移到 GPU
+            u_t = torch.tensor(u_sequence[t, :], device='cuda', dtype=torch.float64)  # 控制输入转移到 GPU
             laplacian_term = torch.matmul(self.L, T[t, :])
             growth_term = self.r * T[t, :] * (1 - T[t, :])
             free_evolution = T[t, :] + dt * (laplacian_term + growth_term)
@@ -87,16 +87,16 @@ class NonlinearMPC:
         self.M = pde.M
 
         # 状态和控制权重矩阵
-        self.Q = Q if Q is not None else torch.eye(self.nxny, device='cuda')  # 使用 PyTorch 张量
-        self.R = R if R is not None else torch.eye(self.M, device='cuda')     # 使用 PyTorch 张量
+        self.Q = Q if Q is not None else torch.eye(self.nxny, device='cuda', dtype=torch.float64)  # 使用 double 类型
+        self.R = R if R is not None else torch.eye(self.M, device='cuda', dtype=torch.float64)     # 使用 double 类型
 
     def cost_function(self, u_seq_flat, x_current_flat, x_target_flat):
         cost = 0.0
-        x = torch.tensor(x_current_flat, device='cuda')  # 转换为 PyTorch 张量
-        u_seq = torch.tensor(u_seq_flat, device='cuda').reshape(self.horizon, self.M)
+        x = torch.tensor(x_current_flat, device='cuda', dtype=torch.float64)  # 转换为 PyTorch 张量
+        u_seq = torch.tensor(u_seq_flat, device='cuda', dtype=torch.float64).reshape(self.horizon, self.M)
 
         for t in range(self.horizon):
-            state_error = x.reshape(1, self.pde.nx * self.pde.ny) - torch.tensor(x_target_flat, device='cuda').reshape(1, self.pde.nx * self.pde.ny)
+            state_error = x.reshape(1, self.pde.nx * self.pde.ny) - torch.tensor(x_target_flat, device='cuda', dtype=torch.float64).reshape(1, self.pde.nx * self.pde.ny)
             cost += state_error.flatten() @ self.Q @ state_error.flatten()
             control_input = u_seq[t]
             cost += control_input @ self.R @ control_input
@@ -105,13 +105,13 @@ class NonlinearMPC:
                 u_seq[t].cpu().numpy()[None, :],
                 [0, self.pde.dt]
             )[-1]
-            x = torch.tensor(x_next.flatten(), device='cuda')
+            x = torch.tensor(x_next.flatten(), device='cuda', dtype=torch.float64)
 
         return float(cost)  # 返回标量值
 
     def control(self, x_current, x_target):
         # 初始猜测（前一时刻的控制序列）
-        u0 = torch.zeros(self.horizon * self.M, device='cuda')
+        u0 = torch.zeros(self.horizon * self.M, device='cuda', dtype=torch.float64)  # 使用 double 类型
 
         # 优化约束和边界
         bounds = [(-1.0, 1.0) for _ in range(self.horizon * self.M)]
@@ -119,7 +119,7 @@ class NonlinearMPC:
         # 最小化成本函数
         result = minimize(
             self.cost_function,
-            u0.cpu().numpy(),  # 将 PyTorch 张量转换为 NumPy 数组以供 SciPy 使用
+            u0.cpu().double().numpy(),  # 将 PyTorch 张量转换为 NumPy 数组以供 SciPy 使用
             args=(x_current.flatten(), x_target.flatten()),
             method='SLSQP',
             bounds=bounds,
@@ -131,8 +131,8 @@ class NonlinearMPC:
 
 def run_mpc_control(pde, mpc, x_target_flat, time_steps):
     nxny = pde.nx * pde.ny
-    T = torch.zeros((time_steps + 1, nxny), device='cuda')  # 在 GPU 上创建张量
-    T[0, :] = torch.randn(nxny, device='cuda') * 0.1  # 随机初始条件
+    T = torch.zeros((time_steps + 1, nxny), device='cuda', dtype=torch.float64)  # 在 GPU 上创建张量
+    T[0, :] = torch.randn(nxny, device='cuda', dtype=torch.float64) * 0.1  # 随机初始条件
     control_mses = []
     control_energies = []
     total_energy = 0.0
@@ -143,16 +143,16 @@ def run_mpc_control(pde, mpc, x_target_flat, time_steps):
         u = mpc.control(current_state.cpu().numpy(), x_target_flat.reshape(pde.nx, pde.ny).cpu().numpy())
 
         # 计算控制能量
-        control_energy = torch.sum(torch.tensor(u, device='cuda') ** 2)
+        control_energy = torch.sum(torch.tensor(u, device='cuda', dtype=torch.float64) ** 2)
         total_energy += control_energy
         control_energies.append(total_energy.cpu().item())
 
         # 应用控制输入
         T_next = pde.simulate(current_state.cpu().numpy(), u[None, :], [t * pde.dt, (t + 1) * pde.dt])[-1]
-        T[t + 1, :] = torch.tensor(T_next.flatten(), device='cuda')
+        T[t + 1, :] = torch.tensor(T_next.flatten(), device='cuda', dtype=torch.float64)
 
         # 计算MSE
-        mse = torch.mean((torch.tensor(T_next.flatten(), device='cuda') - torch.tensor(x_target_flat.flatten(), device='cuda')) ** 2)
+        mse = torch.mean((torch.tensor(T_next.flatten(), device='cuda', dtype=torch.float64) - torch.tensor(x_target_flat.flatten(), device='cuda', dtype=torch.float64)) ** 2)
         control_mses.append(mse.cpu().item())
 
     return T.cpu().numpy(), control_mses, control_energies
@@ -174,16 +174,16 @@ if __name__ == "__main__":
     def wave_solution(x, y, t, c=0.5):
         return torch.exp(-c * (x + y - c * t))
 
-    x_coords = torch.linspace(0, 1, nx, device='cuda')
-    y_coords = torch.linspace(0, 1, ny, device='cuda')
+    x_coords = torch.linspace(0, 1, nx, device='cuda', dtype=torch.float64)
+    y_coords = torch.linspace(0, 1, ny, device='cuda', dtype=torch.float64)
     X, Y = torch.meshgrid(x_coords, y_coords, indexing='ij')
     T_target = wave_solution(X, Y, t=0)
     x_target_flat = T_target.flatten()
 
     # MPC参数
     horizon = 3  # 预测时域
-    Q = torch.eye(nx * ny, device='cuda') * 1.0  # 状态权重
-    R = torch.eye(pde.M, device='cuda') * 0.01   # 控制权重
+    Q = torch.eye(nx * ny, device='cuda', dtype=torch.float64) * 1.0  # 状态权重
+    R = torch.eye(pde.M, device='cuda', dtype=torch.float64) * 0.01   # 控制权重
 
     # 创建MPC控制器
     mpc = NonlinearMPC(pde, horizon=horizon, Q=Q, R=R)
