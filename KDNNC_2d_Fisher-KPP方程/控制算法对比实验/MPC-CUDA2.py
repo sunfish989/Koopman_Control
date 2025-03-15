@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
+from torch.optim import Adam  # 使用 PyTorch 的优化器替代 scipy.optimize.minimize
 
 class PDE2D:
     def __init__(self, nx, ny, dx, dy, D, r, control_density):
@@ -65,7 +65,7 @@ class PDE2D:
         time_steps = len(u_sequence)
         dt = (t_span[1] - t_span[0]) / time_steps
         N = self.nx * self.ny
-        T = torch.zeros((time_steps + 1, N), device='cuda', dtype=torch.float64)  # 使用 double 类型
+        T = torch.zeros((time_steps + 1, N), device='cuda', dtype=torch.float64)  # 在 GPU 上创建张量
         T[0, :] = torch.tensor(T0.flatten(), device='cuda', dtype=torch.float64)  # 初始条件转移到 GPU
 
         for t in range(time_steps):
@@ -85,48 +85,39 @@ class NonlinearMPC:
         self.horizon = horizon
         self.nxny = pde.nx * pde.ny
         self.M = pde.M
-
         # 状态和控制权重矩阵
         self.Q = Q if Q is not None else torch.eye(self.nxny, device='cuda', dtype=torch.float64)  # 使用 double 类型
         self.R = R if R is not None else torch.eye(self.M, device='cuda', dtype=torch.float64)     # 使用 double 类型
 
-    def cost_function(self, u_seq_flat, x_current_flat, x_target_flat):
+    def cost_function(self, u_seq, x_current, x_target):
         cost = 0.0
-        x = torch.tensor(x_current_flat, device='cuda', dtype=torch.float64)  # 转换为 PyTorch 张量
-        u_seq = torch.tensor(u_seq_flat, device='cuda', dtype=torch.float64).reshape(self.horizon, self.M)
-
+        x = x_current.clone()
         for t in range(self.horizon):
-            state_error = x.reshape(1, self.pde.nx * self.pde.ny) - torch.tensor(x_target_flat, device='cuda', dtype=torch.float64).reshape(1, self.pde.nx * self.pde.ny)
+            state_error = x.reshape(1, self.pde.nx * self.pde.ny) - x_target.reshape(1, self.pde.nx * self.pde.ny)
             cost += state_error.flatten() @ self.Q @ state_error.flatten()
             control_input = u_seq[t]
             cost += control_input @ self.R @ control_input
-            x_next = self.pde.simulate(
+            x = self.pde.simulate(
                 x.reshape(self.pde.nx, self.pde.ny).cpu().numpy(),
-                u_seq[t].cpu().numpy()[None, :],
+                control_input.cpu().numpy()[None, :],
                 [0, self.pde.dt]
             )[-1]
-            x = torch.tensor(x_next.flatten(), device='cuda', dtype=torch.float64)
-
-        return float(cost)  # 返回标量值
+            x = torch.tensor(x.flatten(), device='cuda', dtype=torch.float64)
+        return cost
 
     def control(self, x_current, x_target):
-        # 初始猜测（前一时刻的控制序列）
-        u0 = torch.zeros(self.horizon * self.M, device='cuda', dtype=torch.float64)  # 使用 double 类型
+        # 初始化控制序列
+        u_seq = torch.zeros((self.horizon, self.M), device='cuda', dtype=torch.float64, requires_grad=True)  # 需要梯度
+        optimizer = Adam([u_seq], lr=0.01)  # 使用 Adam 优化器
 
-        # 优化约束和边界
-        bounds = [(-1.0, 1.0) for _ in range(self.horizon * self.M)]
+        # 优化控制序列
+        for _ in range(50):  # 最大迭代次数
+            optimizer.zero_grad()
+            cost = self.cost_function(u_seq, x_current, x_target)
+            cost.backward()  # 自动微分计算梯度
+            optimizer.step()  # 更新控制序列
 
-        # 最小化成本函数
-        result = minimize(
-            self.cost_function,
-            u0.cpu().double().numpy(),  # 将 PyTorch 张量转换为 NumPy 数组以供 SciPy 使用
-            args=(x_current.flatten(), x_target.flatten()),
-            method='SLSQP',
-            bounds=bounds,
-            options={'maxiter': 50}
-        )
-
-        return result.x[:self.M]  # 返回当前时刻的控制输入
+        return u_seq[0].detach().cpu().numpy()  # 返回当前时刻的控制输入
 
 
 def run_mpc_control(pde, mpc, x_target_flat, time_steps):
@@ -140,7 +131,8 @@ def run_mpc_control(pde, mpc, x_target_flat, time_steps):
     for t in range(time_steps):
         print(f"Time step: {t+1}/{time_steps}")
         current_state = T[t, :].reshape(pde.nx, pde.ny)
-        u = mpc.control(current_state.cpu().numpy(), x_target_flat.reshape(pde.nx, pde.ny).cpu().numpy())
+        # 使用 GPU 原生优化器计算控制输入
+        u = mpc.control(current_state, x_target_flat.reshape(pde.nx, pde.ny))
 
         # 计算控制能量
         control_energy = torch.sum(torch.tensor(u, device='cuda', dtype=torch.float64) ** 2)
