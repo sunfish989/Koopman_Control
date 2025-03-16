@@ -1,15 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# plt.rcParams['font.sans-serif'] = ['Heiti TC']
-# plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['font.sans-serif'] = ['Heiti TC']
+plt.rcParams['axes.unicode_minus'] = False
 
 # 设置全局字体和图片格式
-plt.rcParams['font.family'] = 'serif'  # 使用衬线字体
+# plt.rcParams['font.family'] = 'serif'  # 使用衬线字体
 plt.rcParams['font.size'] = 12        # 字体大小
 plt.rcParams['axes.linewidth'] = 1.5  # 坐标轴宽度
 plt.rcParams['lines.linewidth'] = 2   # 线条宽度
-plt.rcParams['figure.dpi'] = 300      # 图片分辨率
+# plt.rcParams['figure.dpi'] = 300      # 图片分辨率
 
 # 加载数据
 kdnn_mpc_mses = np.loadtxt('kdnn_mpc_mses.txt')
@@ -27,16 +27,16 @@ time_axis = np.arange(time_steps)
 
 # 绘制控制MSE对比图
 plt.figure(figsize=(8, 6))
-plt.plot(time_axis, kdnn_mpc_mses, label='KDNN-MPC', color='blue', linestyle='-')
-plt.plot(time_axis, kdnnc_lqr_mses, label='KDNNC-LQR', color='red', linestyle='--')
+plt.plot(time_axis, kdnn_mpc_mses, label='DKNNC-MPC', color='blue', linestyle='-')
+plt.plot(time_axis, kdnnc_lqr_mses, label='DKNNC-LQR', color='red', linestyle='--')
 plt.plot(time_axis, mpc_mses, label='MPC', color='green', linestyle='-.')
 plt.plot(time_axis, pid_mses, label='PID', color='purple', linestyle=':')
 
 # 添加图例、标题和坐标轴标签
-plt.legend(loc='upper right', fontsize=10, frameon=True, edgecolor='black')
-plt.title('Control MSE Comparison', fontsize=14, fontweight='bold')
-plt.xlabel('Time Steps', fontsize=12)
-plt.ylabel('Mean Squared Error (MSE)', fontsize=12)
+plt.legend(loc='upper left', fontsize=10, frameon=True, edgecolor='black')
+plt.title('控制均方误差(MSE)对比', fontsize=14, fontweight='bold')
+plt.xlabel('时间步', fontsize=12)
+plt.ylabel('均方误差(MSE)', fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.7)  # 添加网格线
 plt.tight_layout()  # 自动调整布局
 plt.savefig('control_mse_comparison.png', bbox_inches='tight')  # 保存图片
@@ -44,16 +44,16 @@ plt.show()
 
 # 绘制控制能量消耗对比图
 plt.figure(figsize=(8, 6))
-plt.plot(time_axis, kdnn_mpc_energies, label='KDNN-MPC', color='blue', linestyle='-')
-plt.plot(time_axis, kdnnc_lqr_energies, label='KDNNC-LQR', color='red', linestyle='--')
+plt.plot(time_axis, kdnn_mpc_energies, label='DKNNC-MPC', color='blue', linestyle='-')
+plt.plot(time_axis, kdnnc_lqr_energies, label='DKNNC-LQR', color='red', linestyle='--')
 plt.plot(time_axis, mpc_energies, label='MPC', color='green', linestyle='-.')
 plt.plot(time_axis, pid_energies, label='PID', color='purple', linestyle=':')
 
 # 添加图例、标题和坐标轴标签
 plt.legend(loc='upper left', fontsize=10, frameon=True, edgecolor='black')
-plt.title('Control Energy Consumption Comparison', fontsize=14, fontweight='bold')
-plt.xlabel('Time Steps', fontsize=12)
-plt.ylabel('Energy Consumption', fontsize=12)
+plt.title('控制累计耗能对比', fontsize=14, fontweight='bold')
+plt.xlabel('时间步', fontsize=12)
+plt.ylabel('累计能量', fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.7)  # 添加网格线
 plt.tight_layout()  # 自动调整布局
 plt.savefig('control_energy_comparison.png', bbox_inches='tight')  # 保存图片
